@@ -25,7 +25,8 @@ elif [[ "$(uname)" == "Darwin" ]]; then
     echo "Homebrew not found; installing..."
     /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
   fi
-  brew install git curl python3 unzip
+ 
+  # brew install git curl python3 unzip
 else
   echo "Unsupported OS: $(uname)"
   exit 1
@@ -33,8 +34,18 @@ fi
 
 # 2. Clone depot_tools if not already present
 if [[ -d "${DEPOT_DIR}" ]]; then
-  echo "depot_tools already cloned at ${DEPOT_DIR}, pulling latest..."
-  git -C "${DEPOT_DIR}" pull
+  echo "depot_tools already cloned at ${DEPOT_DIR}, updating..."
+  cd "${DEPOT_DIR}"
+  # Check if we're on a branch or in detached HEAD state
+  if git symbolic-ref HEAD &> /dev/null; then
+    # We're on a branch, safe to pull
+    git pull
+  else
+    # We're in detached HEAD state, fetch and reset to origin/main
+    git fetch origin
+    git reset --hard origin/main
+  fi
+  cd - > /dev/null
 else
   echo "Cloning depot_tools into ${DEPOT_DIR}..."
   git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git "${DEPOT_DIR}"
