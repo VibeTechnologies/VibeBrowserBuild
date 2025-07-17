@@ -64,6 +64,34 @@ else
   echo "Please reload your shell or run: source ${RC_FILE}"
 fi
 
+# 4. Install vibe commands to $HOME/.local/bin
+LOCAL_BIN="$HOME/.local/bin"
+mkdir -p "$LOCAL_BIN"
+
+install_script() {
+  src="$1"
+  dest="$2"
+  cp "$src" "$dest"
+  chmod +x "$dest"
+}
+
+install_script "$(dirname "$0")/2-fetch-code.py" "$LOCAL_BIN/vibe-fetch-code"
+install_script "$(dirname "$0")/3-configure-debug.sh" "$LOCAL_BIN/vibe-configure-debug"
+install_script "$(dirname "$0")/4-build-debug.sh" "$LOCAL_BIN/vibe-build-debug"
+
+# 5. Add $HOME/.local/bin to PATH in shell RC file if not present
+if ! grep -q 'export PATH="$HOME/.local/bin:$PATH"' "$RC_FILE"; then
+  echo "Adding $HOME/.local/bin to PATH in $RC_FILE"...
+  {
+    echo ""
+    echo "# Added by vibe installer on $(date '+%Y-%m-%d')"
+    echo 'export PATH="$HOME/.local/bin:$PATH"'
+  } >> "$RC_FILE"
+  echo "Please reload your shell or run: source $RC_FILE"
+else
+  echo "$HOME/.local/bin already in PATH in $RC_FILE"
+fi
+
 # 4. Verify installation
 echo "Verifying depot_tools installation..."
 export PATH="${DEPOT_DIR}:$PATH"
