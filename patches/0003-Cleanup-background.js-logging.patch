@@ -1,0 +1,2009 @@
+From 6bde0c7b9907e1adc91a0244f78a9f770f5d2272 Mon Sep 17 00:00:00 2001
+From: Den <2119348+dzianisv@users.noreply.github.com>
+Date: Tue, 22 Jul 2025 11:56:04 +0300
+Subject: [PATCH 03/10] Cleanup background.js logging
+
+---
+ chrome/browser/resources/vibe/ai_agent.js   |    1 -
+ chrome/browser/resources/vibe/background.js |  136 +-
+ chrome/browser/resources/vibe/content.js    | 1396 +++++++++----------
+ 3 files changed, 763 insertions(+), 770 deletions(-)
+
+diff --git a/chrome/browser/resources/vibe/ai_agent.js b/chrome/browser/resources/vibe/ai_agent.js
+index f4815a33f9..84bcfce430 100644
+--- a/chrome/browser/resources/vibe/ai_agent.js
++++ b/chrome/browser/resources/vibe/ai_agent.js
+@@ -77,7 +77,6 @@ export class VibeLangchainAgent {
+       provider: provider,
+       model: config.model,
+       modelName,
+-      hasApiKey: !!apiKey,
+       availableProviders: config.apiKeys ? Object.keys(config.apiKeys).filter(k => config.apiKeys[k]) : [],
+       environmentConfiguration: config.environmentConfiguration
+     });
+diff --git a/chrome/browser/resources/vibe/background.js b/chrome/browser/resources/vibe/background.js
+index e264cf1576..38188aa9cf 100644
+--- a/chrome/browser/resources/vibe/background.js
++++ b/chrome/browser/resources/vibe/background.js
+@@ -1,6 +1,6 @@
+ // @ts-nocheck
+ // background.js - Chrome Extension Service Worker
+-console.log('🚀 [BACKGROUND] [background.js] Vibe AI Agent background script starting...');
++console.log('🚀 [BACKGROUND] Vibe AI Agent background script starting...');
+ 
+ // Import the real LangChain agent implementation
+ import { VibeLangchainAgent } from "./ai_agent.js";
+@@ -85,11 +85,11 @@ function extractQueryFromUrl(url) {
+ // Side panel management
+ async function openSidePanel(tabId) {
+   try {
+-    console.log('🎯 [SIDE-PANEL] [background.js] Opening side panel for tab:', tabId);
++    console.log('🎯 [SIDE-PANEL] Opening side panel for tab:', tabId);
+     await chrome.sidePanel.open({ tabId });
+-    console.log('✅ [SIDE-PANEL] [background.js] Side panel opened successfully');
++    console.log('✅ [SIDE-PANEL] Side panel opened successfully');
+   } catch (error) {
+-    console.error('❌ [SIDE-PANEL] [background.js] Error opening side panel:', error);
++    console.error('❌ [SIDE-PANEL] Error opening side panel:', error);
+   }
+ }
+ 
+@@ -102,9 +102,9 @@ async function sendStatusUpdate(tabId, status) {
+       data: status,
+       tabId: tabId
+     });
+-    console.log('✅ [SIDE-PANEL] [background.js] Status update sent to side panel:', status.type);
++    console.log('✅ [SIDE-PANEL] Status update sent to side panel:', status.type);
+   } catch (error) {
+-    console.log('ℹ️ [SIDE-PANEL] [background.js] Side panel not ready for status update:', error.message);
++    console.log('ℹ️ [SIDE-PANEL] Side panel not ready for status update:', error.message);
+   }
+ }
+ 
+@@ -132,19 +132,19 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
+   if (details.frameId !== 0) return;
+   
+   const url = details.url;
+-  console.log('🔍 [NAVIGATION] [background.js] Navigation detected:', url);
++  console.log('🔍 [NAVIGATION] Navigation detected:', url);
+   
+   // Check both URL patterns and extracted queries
+   const extractedQuery = extractQueryFromUrl(url);
+   const isNaturalQuery = isNaturalLanguageQuery(extractedQuery);
+   const isAutoCompleteNavigation = isFromNaturalLanguageAutocomplete(url);
+   
+-  console.log('📝 [NAVIGATION] [background.js] Extracted query:', extractedQuery);
+-  console.log('🧠 [NAVIGATION] [background.js] Natural language query result:', isNaturalQuery);
+-  console.log('🤖 [NAVIGATION] [background.js] Autocomplete navigation result:', isAutoCompleteNavigation);
++  console.log('📝 [NAVIGATION] Extracted query:', extractedQuery);
++  console.log('🧠 [NAVIGATION] Natural language query result:', isNaturalQuery);
++  console.log('🤖 [NAVIGATION] Autocomplete navigation result:', isAutoCompleteNavigation);
+   
+   if (isNaturalQuery || isAutoCompleteNavigation) {
+-    console.log('🎯 [NAVIGATION] [background.js] Natural language query detected, intercepting navigation');
++    console.log('🎯 [NAVIGATION] Natural language query detected, intercepting navigation');
+     
+     try {
+       // Cancel the navigation
+@@ -179,14 +179,14 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
+       const config = await getAIConfiguration();
+       
+       // Process the query with AI agent
+-      console.log('🤖 [AI] [background.js] Processing query with AI agent:', extractedQuery);
++      console.log('🤖 [AI] Processing query with AI agent:', extractedQuery);
+       const result = await aiAgent.processUserRequest({
+         user_request: extractedQuery,
+         tabId: details.tabId,
+         config: config
+       });
+       
+-      console.log('✅ [AI] [background.js] Query processing completed:', result);
++      console.log('✅ [AI] Query processing completed:', result);
+       
+       // Adapt LangChain result format to expected format
+       const adaptedResult = {
+@@ -203,7 +203,7 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
+       });
+       
+     } catch (error) {
+-      console.error('❌ [NAVIGATION] [background.js] Error processing natural language query:', error);
++      console.error('❌ [NAVIGATION] Error processing natural language query:', error);
+       
+       await sendStatusUpdate(details.tabId, {
+         type: 'ERROR',
+@@ -218,7 +218,7 @@ async function getAIConfiguration() {
+     // Use settings bridge to get combined settings (browser + extension + environment)
+     const combined = await getBrowserSettingsViaMessage();
+     
+-    console.log('🔑 [CONFIG] [background.js] Settings bridge loaded config:', combined);
++    console.log('🔑 [CONFIG] Settings bridge loaded config:', combined);
+     
+     // Get the active provider
+     const provider = combined.provider || 'openai';
+@@ -242,7 +242,7 @@ async function getAIConfiguration() {
+     const baseUrl = baseUrls[provider] || null;
+     const activeApiKey = apiKeys[provider];
+     
+-    console.log(`🔍 [CONFIG] [background.js] Using ${provider} - API key length:`, activeApiKey ? activeApiKey.length : 0);
++    console.log(`🔍 [CONFIG] Using ${provider} - API key length:`, activeApiKey ? activeApiKey.length : 0);
+     
+     const config = {
+       provider: provider,
+@@ -256,7 +256,7 @@ async function getAIConfiguration() {
+       baseUrls: baseUrls                   // All base URLs by provider
+     };
+     
+-    console.log('🔧 [CONFIG] [background.js] Final config created - provider:', 
++    console.log('🔧 [CONFIG] Final config created - provider:', 
+       config.provider, 
+       'apiKey present:', !!activeApiKey,
+       'all providers:', Object.keys(apiKeys).filter(k => apiKeys[k])
+@@ -268,7 +268,7 @@ async function getBrowserSettingsViaMessage() {
+   try {
+     // Read settings directly from browser preferences using chrome.settingsPrivate
+     if (chrome.settingsPrivate) {
+-      console.log('🔧 [CONFIG] [background.js] Reading settings from browser preferences...');
++      console.log('🔧 [CONFIG] Reading settings from browser preferences...');
+       
+       // Read Vibe AI preferences directly
+       const preferences = await new Promise((resolve) => {
+@@ -276,17 +276,14 @@ async function getBrowserSettingsViaMessage() {
+           resolve(prefs || []);
+         });
+       });
+-      
+-      console.log('🔍 [CONFIG] [background.js] Total preferences found:', preferences.length);
+-      console.log('🔍 [CONFIG] [background.js] Sample preference keys:', preferences.slice(0, 10).map(p => p.key));
+-      
++
+       // Look for any preferences containing 'vibe' or 'ai'
+       const vibeRelated = preferences.filter(p => 
+         p.key && (p.key.includes('vibe') || p.key.includes('ai'))
+       );
+-      console.log('🔍 [CONFIG] [background.js] Vibe/AI related preferences:');
++      console.log('🔍 [CONFIG] Vibe/AI related preferences:');
+       vibeRelated.forEach((p, i) => {
+-        console.log(`[background.js]   ${i + 1}. Key: "${p.key}", Value:`, p.value);
++        console.log(`"${p.key}": ${p.value}`);
+       });
+       
+       // Extract Vibe AI settings from preferences
+@@ -297,16 +294,15 @@ async function getBrowserSettingsViaMessage() {
+         }
+       }
+       
+-      console.log('✅ [CONFIG] [background.js] Browser preferences loaded - foundPrefs:', Object.keys(vibePrefs).length);
+-      console.log('✅ [CONFIG] [background.js] Preference keys found:', Object.keys(vibePrefs));
+-      console.log('✅ [CONFIG] [background.js] All vibe preferences:', JSON.stringify(vibePrefs, null, 2));
+-      console.log('✅ [CONFIG] [background.js] Looking for key: vibe_ai.openai_api_key');
+-      console.log('✅ [CONFIG] [background.js] hasOpenAIKey:', !!(vibePrefs['vibe_ai.openai_api_key']));
+-      console.log('✅ [CONFIG] [background.js] openaiKeyLength:', vibePrefs['vibe_ai.openai_api_key'] ? vibePrefs['vibe_ai.openai_api_key'].length : 0);
++      console.log('✅ [CONFIG] Browser preferences loaded - foundPrefs:', Object.keys(vibePrefs).length);
++      console.log('✅ [CONFIG] Preference keys found:', Object.keys(vibePrefs));
++      console.log('✅ [CONFIG] All vibe preferences:', JSON.stringify(vibePrefs, null, 2));
++      console.log('✅ [CONFIG] hasOpenAIKey:', !!(vibePrefs['vibe_ai.openai_api_key']));
++      console.log('✅ [CONFIG] openaiKeyLength:', vibePrefs['vibe_ai.openai_api_key'] ? vibePrefs['vibe_ai.openai_api_key'].length : 0);
+       
+       // If no API keys found in preferences, try to trigger environment initialization
+       if (!vibePrefs['vibe_ai.openai_api_key'] && !vibePrefs['vibe_ai.gemini_api_key']) {
+-        console.log('🔍 [CONFIG] [background.js] No API keys in preferences, checking environment...');
++        console.log('🔍 [CONFIG] No API keys in preferences, checking environment...');
+         try {
+           // Try to call the settings API to trigger environment initialization
+           const envResponse = await new Promise((resolve, reject) => {
+@@ -316,7 +312,7 @@ async function getBrowserSettingsViaMessage() {
+             setTimeout(() => resolve({}), 100);
+           });
+         } catch (e) {
+-          console.log('🔍 [CONFIG] [background.js] Environment initialization attempt failed:', e.message);
++          console.log('🔍 [CONFIG] Environment initialization attempt failed:', e.message);
+         }
+       }
+       
+@@ -328,7 +324,7 @@ async function getBrowserSettingsViaMessage() {
+         geminiApiKey: vibePrefs['vibe_ai.gemini_api_key'] || null
+       };
+       
+-      console.log('🔧 [CONFIG] [background.js] Final environment configuration:', {
++      console.log('🔧 [CONFIG] Final environment configuration:', {
+         openaiConfigured: environmentConfiguration.openaiConfigured,
+         geminiConfigured: environmentConfiguration.geminiConfigured,
+         hasOpenaiKey: !!environmentConfiguration.openaiApiKey,
+@@ -347,7 +343,7 @@ async function getBrowserSettingsViaMessage() {
+         environmentConfiguration
+       };
+     } else {
+-      console.log('⚠️ [CONFIG] [background.js] chrome.settingsPrivate not available, falling back to storage');
++      console.log('⚠️ [CONFIG] chrome.settingsPrivate not available, falling back to storage');
+       
+       // Fallback to storage-based approach
+       const stored = await chrome.storage.local.get([
+@@ -373,7 +369,7 @@ async function getBrowserSettingsViaMessage() {
+       };
+     }
+   } catch (error) {
+-    console.log('⚠️ [CONFIG] [background.js] Failed to read browser settings:', error.message);
++    console.log('⚠️ [CONFIG] Failed to read browser settings:', error.message);
+     return {};
+   }
+ }
+@@ -381,7 +377,7 @@ async function getBrowserSettingsViaMessage() {
+ 
+ // Command handler for keyboard shortcuts (Cmd+E/Ctrl+E)
+ chrome.commands.onCommand.addListener(async (command) => {
+-  console.log('⌨️ [KEYBOARD] [background.js] Command triggered:', command);
++  console.log('⌨️ [KEYBOARD] Command triggered:', command);
+   
+   if (command === 'toggle-panel') {
+     try {
+@@ -389,37 +385,37 @@ chrome.commands.onCommand.addListener(async (command) => {
+       const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+       
+       if (!activeTab) {
+-        console.error('❌ [KEYBOARD] [background.js] No active tab found');
++        console.error('❌ [KEYBOARD] No active tab found');
+         return;
+       }
+       
+-      console.log('🎯 [KEYBOARD] [background.js] Opening side panel for tab:', activeTab.id);
++      console.log('🎯 [KEYBOARD] Opening side panel for tab:', activeTab.id);
+       
+       // Open side panel
+       await openSidePanel(activeTab.id);
+       
+-      console.log('✅ [KEYBOARD] [background.js] Side panel opened via keyboard shortcut');
++      console.log('✅ [KEYBOARD] Side panel opened via keyboard shortcut');
+       
+     } catch (error) {
+-      console.error('❌ [KEYBOARD] [background.js] Error handling keyboard command:', error);
++      console.error('❌ [KEYBOARD] Error handling keyboard command:', error);
+     }
+   }
+ });
+ 
+ // Extension installation
+ chrome.runtime.onInstalled.addListener(async () => {
+-  console.log('🚀 [background.js] Vibe AI Agent extension installed');
++  console.log('🚀 Vibe AI Agent extension installed');
+ 
+ // Omnibox API handler - triggered by "vibe <query>"
+ chrome.omnibox.onInputEntered.addListener(async (text, disposition) => {
+-  console.log('🎯 [OMNIBOX] [background.js] Vibe keyword triggered with:', text);
++  console.log('🎯 [OMNIBOX] Vibe keyword triggered with:', text);
+   
+   try {
+     // Get the active tab
+     const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+     
+     if (!activeTab) {
+-      console.error('❌ [OMNIBOX] [background.js] No active tab found');
++      console.error('❌ [OMNIBOX] No active tab found');
+       return;
+     }
+     
+@@ -454,10 +450,10 @@ chrome.omnibox.onInputEntered.addListener(async (text, disposition) => {
+       actions: aiResponse.actions || []
+     });
+     
+-    console.log('✅ [OMNIBOX] [background.js] Successfully processed omnibox query');
++    console.log('✅ [OMNIBOX] Successfully processed omnibox query');
+     
+   } catch (error) {
+-    console.error('❌ [OMNIBOX] [background.js] Error processing omnibox query:', error);
++    console.error('❌ [OMNIBOX] Error processing omnibox query:', error);
+     
+     // Send error to side panel if possible
+     try {
+@@ -469,14 +465,14 @@ chrome.omnibox.onInputEntered.addListener(async (text, disposition) => {
+         });
+       }
+     } catch (sendError) {
+-      console.error('❌ [OMNIBOX] [background.js] Failed to send error to side panel:', sendError);
++      console.error('❌ [OMNIBOX] Failed to send error to side panel:', sendError);
+     }
+   }
+ });
+ 
+ // Update omnibox suggestions
+ chrome.omnibox.onInputChanged.addListener((text, suggest) => {
+-  console.log('🔍 [OMNIBOX] [background.js] Input changed:', text);
++  console.log('🔍 [OMNIBOX] Input changed:', text);
+   
+   const suggestions = [
+     {
+@@ -508,12 +504,12 @@ chrome.omnibox.onInputChanged.addListener((text, suggest) => {
+ 
+ // Extension startup
+ chrome.runtime.onStartup.addListener(async () => {
+-  console.log('🚀 [background.js] Vibe AI Agent extension starting up');
++  console.log('🚀 Vibe AI Agent extension starting up');
+ });
+ 
+ // Message handling for side panel communication
+ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+-  console.log('📨 [background.js] Received message:', JSON.stringify(message));
++  console.log('📨 Received message:', JSON.stringify(message));
+   
+   switch (message.type) {
+     case 'processCommand':
+@@ -533,10 +529,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+       try {
+         // Background scripts can't access window.matchMedia
+         // For now, return a default value and let the content script/sidepanel handle detection
+-        console.log('🌙 [background.js] Dark mode check requested - deferring to content script');
++        console.log('🌙 Dark mode check requested - deferring to content script');
+         sendResponse({ isDarkMode: false, useClientSideDetection: true });
+       } catch (e) {
+-        console.error('❌ [background.js] Error detecting dark mode:', e);
++        console.error('❌ Error detecting dark mode:', e);
+         sendResponse({ isDarkMode: false, useClientSideDetection: true });
+       }
+       return true; // Keep the message channel open for async response
+@@ -548,12 +544,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+       
+     case 'USER_QUESTION_RESPONSE':
+       // Forward user response back to the asking component
+-      console.log('📝 [background.js] User question response received:', message.response);
++      console.log('📝 User question response received:', message.response);
+       sendResponse({ success: true });
+       return true; // Keep the message channel open for async response
+       
+     default:
+-      console.log('❓ [background.js] Unknown message type:', message.type);
++      console.log('❓ Unknown message type:', message.type);
+       sendResponse({ success: false, error: 'Unknown message type' });
+       return false;
+   }
+@@ -561,15 +557,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+ 
+ // Forward message to sidepanel
+ function forwardMessageToSidepanel(message, sendResponse) {
+-  console.log('📤 [background.js] Forwarding message to sidepanel:', message.type);
++  console.log('📤 Forwarding message to sidepanel:', message.type);
+   
+   try {
+     // Forward message to sidepanel by sending to all tabs with the extension context
+     chrome.runtime.sendMessage(message).then((response) => {
+-      console.log('✅ [background.js] Message forwarded to sidepanel, response:', response);
++      console.log('✅ Message forwarded to sidepanel, response:', response);
+       sendResponse(response || { success: true });
+     }).catch(error => {
+-      console.log('⚠️ [background.js] Error forwarding to sidepanel:', error.message);
++      console.log('⚠️ Error forwarding to sidepanel:', error.message);
+       // This is normal if sidepanel isn't open
+       sendResponse({ 
+         success: false, 
+@@ -577,7 +573,7 @@ function forwardMessageToSidepanel(message, sendResponse) {
+       });
+     });
+   } catch (error) {
+-    console.error('❌ [background.js] Error forwarding message:', error);
++    console.error('❌ Error forwarding message:', error);
+     sendResponse({ success: false, error: error.message });
+   }
+ }
+@@ -585,7 +581,7 @@ function forwardMessageToSidepanel(message, sendResponse) {
+ // Side panel command handler
+ async function handleSidePanelCommand(message, sendResponse) {
+   const { command, source, operationId } = message;
+-  console.log(`💬 [SIDE-PANEL] [background.js] Received command from ${source}: "${command}"`);
++  console.log(`💬 [SIDE-PANEL] Received command from ${source}: "${command}"`);
+   
+   // Track this operation if operationId is provided
+   if (operationId) {
+@@ -595,7 +591,7 @@ async function handleSidePanelCommand(message, sendResponse) {
+   try {    
+     // Check if operation was stopped before processing
+     if (operationId && currentOperations.has(operationId) && currentOperations.get(operationId).stopped) {
+-      console.log(`🛑 [SIDE-PANEL] [background.js] Operation ${operationId} was stopped before processing`);
++      console.log(`🛑 [SIDE-PANEL] Operation ${operationId} was stopped before processing`);
+       currentOperations.delete(operationId);
+       sendResponse({
+         success: false,
+@@ -615,7 +611,7 @@ async function handleSidePanelCommand(message, sendResponse) {
+       operationId: operationId
+     });
+     
+-    console.log('✅ [SIDE-PANEL] [background.js] Command processed successfully:', result);
++    console.log('✅ [SIDE-PANEL] Command processed successfully:', result);
+     
+     // Clean up operation tracking
+     if (operationId) {
+@@ -631,7 +627,7 @@ async function handleSidePanelCommand(message, sendResponse) {
+     });
+     
+   } catch (error) {
+-    console.error('❌ [SIDE-PANEL] [background.js] Error processing command:', error);
++    console.error('❌ [SIDE-PANEL] Error processing command:', error);
+     
+     // Clean up operation tracking
+     if (operationId) {
+@@ -649,10 +645,10 @@ async function handleSidePanelCommand(message, sendResponse) {
+ // Stop operation handler
+ function handleStopOperation(message, sendResponse) {
+   const { operationId, source } = message;
+-  console.log(`🛑 [STOP] [background.js] Stop request from ${source} for operation: ${operationId}`);
++  console.log(`🛑 [STOP] Stop request from ${source} for operation: ${operationId}`);
+   
+   if (!operationId) {
+-    console.log('⚠️ [STOP] [background.js] No operation ID provided');
++    console.log('⚠️ [STOP] No operation ID provided');
+     sendResponse({ success: false, error: 'No operation ID provided' });
+     return;
+   }
+@@ -661,7 +657,7 @@ function handleStopOperation(message, sendResponse) {
+     // Mark operation as stopped
+     const operation = currentOperations.get(operationId);
+     operation.stopped = true;
+-    console.log(`✅ [STOP] [background.js] Operation ${operationId} marked as stopped`);
++    console.log(`✅ [STOP] Operation ${operationId} marked as stopped`);
+     
+     sendResponse({ 
+       success: true, 
+@@ -669,7 +665,7 @@ function handleStopOperation(message, sendResponse) {
+       operationId: operationId
+     });
+   } else {
+-    console.log(`⚠️ [STOP] [background.js] Operation ${operationId} not found or already completed`);
++    console.log(`⚠️ [STOP] Operation ${operationId} not found or already completed`);
+     sendResponse({ 
+       success: false, 
+       error: 'Operation not found or already completed',
+@@ -681,7 +677,7 @@ function handleStopOperation(message, sendResponse) {
+ // Update suggestions handler
+ function handleUpdateSuggestions(message, sendResponse) {
+   const { suggestions, source } = message;
+-  console.log(`💡 [UPDATE_SUGGESTIONS] [background.js] Update suggestions request from ${source}:`, suggestions);
++  console.log(`💡 [UPDATE_SUGGESTIONS] Update suggestions request from ${source}:`, suggestions);
+   
+   try {
+     // Forward message to sidepanel by sending to all tabs with the extension context
+@@ -690,14 +686,14 @@ function handleUpdateSuggestions(message, sendResponse) {
+       suggestions: suggestions,
+       source: source
+     }).then(() => {
+-      console.log(`✅ [UPDATE_SUGGESTIONS] [background.js] Suggestions forwarded to sidepanel`);
++      console.log(`✅ [UPDATE_SUGGESTIONS] Suggestions forwarded to sidepanel`);
+       sendResponse({ 
+         success: true, 
+         message: 'Suggestions updated successfully',
+         count: suggestions ? suggestions.length : 0
+       });
+     }).catch(error => {
+-      console.log(`⚠️ [UPDATE_SUGGESTIONS] [background.js] Error forwarding to sidepanel:`, error.message);
++      console.log(`⚠️ [UPDATE_SUGGESTIONS] Error forwarding to sidepanel:`, error.message);
+       // This is normal if sidepanel isn't open
+       sendResponse({ 
+         success: true, 
+@@ -706,7 +702,7 @@ function handleUpdateSuggestions(message, sendResponse) {
+       });
+     });
+   } catch (error) {
+-    console.error(`❌ [UPDATE_SUGGESTIONS] [background.js] Error handling suggestions:`, error);
++    console.error(`❌ [UPDATE_SUGGESTIONS] Error handling suggestions:`, error);
+     sendResponse({ 
+       success: false, 
+       error: error.message
+@@ -714,4 +710,4 @@ function handleUpdateSuggestions(message, sendResponse) {
+   }
+ }
+ 
+-console.log('✅ [BACKGROUND] [background.js] Background script initialization complete');
+\ No newline at end of file
++console.log('✅ [BACKGROUND] Background script initialization complete');
+\ No newline at end of file
+diff --git a/chrome/browser/resources/vibe/content.js b/chrome/browser/resources/vibe/content.js
+index 9230eeeb93..33024a62de 100644
+--- a/chrome/browser/resources/vibe/content.js
++++ b/chrome/browser/resources/vibe/content.js
+@@ -9,433 +9,432 @@ import * as contentExtractor from './lib/contentExtractor.js';
+ import * as readability from './lib/readability.js';
+ import * as buildDomTree from './lib/buildDomTree.js';
+ 
+-  console.log("📄 Vibe AI content script initializing on:", window.location.href);
+ 
+-  // Connection status tracking
+-  let isConnected = true;
+-  let connectionRetries = 0;
+-  const maxRetries = 3;
++// Connection status tracking
++let isConnected = true;
++let connectionRetries = 0;
++const maxRetries = 3;
++
++// Test connection to background script
++function testConnection() {
++  try {
++    chrome.runtime.sendMessage({ type: "ping" }, (response) => {
++      if (chrome.runtime.lastError) {
++        console.log("⚠️ Connection test failed:", chrome.runtime.lastError.message);
++        isConnected = false;
++        attemptReconnection();
++      } else {
++        console.log("✅ Connection to background script confirmed");
++        isConnected = true;
++        connectionRetries = 0;
++      }
++    });
++  } catch (error) {
++    console.log("❌ Connection test error:", String(error));
++    isConnected = false;
++    attemptReconnection();
++  }
++}
++
++// Attempt to reconnect to background script
++function attemptReconnection() {
++  if (connectionRetries < maxRetries) {
++    connectionRetries++;
++    console.log(`🔄 Attempting reconnection ${connectionRetries}/${maxRetries}...`);
++    setTimeout(testConnection, 1000 * connectionRetries);
++  } else {
++    console.log("❌ Max reconnection attempts reached");
++  }
++}
++
++// Enhanced message listener with error handling
++chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
++  console.log("📨 Content script received message:", JSON.stringify(message));
+ 
+-  // Test connection to background script
+-  function testConnection() {
++  // Handle ping message for connection testing
++  if (message.type === 'ping') {
++    sendResponse({ status: 'pong' });
++    return true;
++  }
++
++  // Handle GET_PAGE_CONTENT message
++  if (message.type === 'GET_PAGE_CONTENT') {
+     try {
+-      chrome.runtime.sendMessage({ type: "ping" }, (response) => {
+-        if (chrome.runtime.lastError) {
+-          console.log("⚠️ Connection test failed:", chrome.runtime.lastError.message);
+-          isConnected = false;
+-          attemptReconnection();
+-        } else {
+-          console.log("✅ Connection to background script confirmed");
+-          isConnected = true;
+-          connectionRetries = 0;
+-        }
+-      });
++      const content = handleGetPageContent(message.data || {});
++      sendResponse({ content, success: true });
+     } catch (error) {
+-      console.log("❌ Connection test error:", String(error));
+-      isConnected = false;
+-      attemptReconnection();
++      console.error('❌ Error getting page content:', error);
++      sendResponse({ error: error.message, success: false });
+     }
++    return true;
+   }
+ 
+-  // Attempt to reconnect to background script
+-  function attemptReconnection() {
+-    if (connectionRetries < maxRetries) {
+-      connectionRetries++;
+-      console.log(`🔄 Attempting reconnection ${connectionRetries}/${maxRetries}...`);
+-      setTimeout(testConnection, 1000 * connectionRetries);
+-    } else {
+-      console.log("❌ Max reconnection attempts reached");
++  // Check connection status
++  if (!isConnected) {
++    console.log("⚠️ Connection not available, attempting to reconnect...");
++    testConnection();
++    sendResponse({ success: false, error: "Connection not available" });
++    return true;
++  }
++
++  try {
++    switch (message.type) {
++      case "ping":
++        sendResponse({ success: true, action: "pong", timestamp: Date.now() });
++        break;
++
++      case "fillForm":
++        Promise.resolve(handleFormFilling(message.data))
++          .then(result => sendResponse({ success: true, action: "form_filled", result }))
++          .catch(error => sendResponse({ success: false, error: String(error) }));
++        break;
++
++      case "clickElement":
++        Promise.resolve(handleElementClick(message.data))
++          .then(result => sendResponse({ success: true, action: "element_clicked", result }))
++          .catch(error => sendResponse({ success: false, error: String(error) }));
++        break;
++
++      case "extractData":
++        Promise.resolve(handleDataExtraction(message.data))
++          .then(result => sendResponse({ success: true, action: "data_extracted", result }))
++          .catch(error => sendResponse({ success: false, error: String(error) }));
++        break;
++
++      case "takeScreenshot":
++        Promise.resolve(handleScreenshot(message.data))
++          .then(result => sendResponse({ success: true, action: "screenshot_taken", result }))
++          .catch(error => sendResponse({ success: false, error: String(error) }));
++        break;
++
++      case "analyzePage":
++        Promise.resolve(handleAIDomAnalysis(message.data))
++          .then(result => sendResponse({ success: true, action: "dom_analysis_started", result }))
++          .catch(error => sendResponse({ success: false, error: String(error) }));
++        break;
++
++      case "scrollPage":
++        Promise.resolve(handlePageScroll(message.data))
++          .then(result => sendResponse({ success: true, action: "page_scrolled", result }))
++          .catch(error => sendResponse({ success: false, error: String(error) }));
++        break;
++
++      case "getPageContent":
++        Promise.resolve(handleGetPageContent(message.data))
++          .then(result => sendResponse({ success: true, action: "page_content_extracted", result }))
++          .catch(error => sendResponse({ success: false, error: String(error) }));
++        break;
++
++      default:
++        console.log("🤷 Unknown message type:", message.type);
++        sendResponse({ success: false, error: "Unknown message type" });
+     }
++  } catch (error) {
++    console.log("❌ Error handling message:", String(error));
++    sendResponse({ success: false, error: String(error) });
+   }
+ 
+-  // Enhanced message listener with error handling
+-  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+-    console.log("📨 Content script received message:", JSON.stringify(message));
++  return true; // Keep message channel open for async responses
++});
+ 
+-    // Handle ping message for connection testing
+-    if (message.type === 'ping') {
+-      sendResponse({ status: 'pong' });
+-      return true;
++/**
++ * Handle form filling
++ */
++function handleFormFilling(data) {
++  console.log("📝 Filling form with data:", JSON.stringify(data));
++
++  try {
++    // Handle simple selector-based filling
++    if (data.selector && data.value) {
++      const result = fillInput(data.selector, data.value);
++      return result;
+     }
+-
+-    // Handle GET_PAGE_CONTENT message
+-    if (message.type === 'GET_PAGE_CONTENT') {
+-      try {
+-        const content = handleGetPageContent(message.data || {});
+-        sendResponse({ content, success: true });
+-      } catch (error) {
+-        console.error('❌ Error getting page content:', error);
+-        sendResponse({ error: error.message, success: false });
+-      }
+-      return true;
++    // Example: Fill flight search form
++    else if (data.type === "flight") {
++      const result = fillFlightForm(data);
++      return result;
++    } else {
++      throw new Error("Invalid form filling data: missing selector/value or type");
+     }
++  } catch (error) {
++    console.log(`❌ Error in handleFormFilling: ${error.message}`);
++    throw error;
++  }
++}
+ 
+-    // Check connection status
+-    if (!isConnected) {
+-      console.log("⚠️ Connection not available, attempting to reconnect...");
+-      testConnection();
+-      sendResponse({ success: false, error: "Connection not available" });
+-      return true;
++/**
++ * Fill flight search form
++ */
++function fillFlightForm(data) {
++  const { from, to, departDate, returnDate } = data;
++  const results = [];
++
++  // Google Flights selectors
++  const selectors = {
++    from: "input[placeholder*=\"Where from\"]",
++    to: "input[placeholder*=\"Where to\"]",
++    departDate: "input[placeholder*=\"Departure\"]",
++    returnDate: "input[placeholder*=\"Return\"]"
++  };
++
++  try {
++    if (from) {
++      const result = fillInput(selectors.from, from);
++      results.push(result.message);
+     }
+ 
+-    try {
+-      switch (message.type) {
+-        case "ping":
+-          sendResponse({ success: true, action: "pong", timestamp: Date.now() });
+-          break;
+-
+-        case "fillForm":
+-          Promise.resolve(handleFormFilling(message.data))
+-            .then(result => sendResponse({ success: true, action: "form_filled", result }))
+-            .catch(error => sendResponse({ success: false, error: String(error) }));
+-          break;
+-
+-        case "clickElement":
+-          Promise.resolve(handleElementClick(message.data))
+-            .then(result => sendResponse({ success: true, action: "element_clicked", result }))
+-            .catch(error => sendResponse({ success: false, error: String(error) }));
+-          break;
+-
+-        case "extractData":
+-          Promise.resolve(handleDataExtraction(message.data))
+-            .then(result => sendResponse({ success: true, action: "data_extracted", result }))
+-            .catch(error => sendResponse({ success: false, error: String(error) }));
+-          break;
+-
+-        case "takeScreenshot":
+-          Promise.resolve(handleScreenshot(message.data))
+-            .then(result => sendResponse({ success: true, action: "screenshot_taken", result }))
+-            .catch(error => sendResponse({ success: false, error: String(error) }));
+-          break;
+-
+-        case "analyzePage":
+-          Promise.resolve(handleAIDomAnalysis(message.data))
+-            .then(result => sendResponse({ success: true, action: "dom_analysis_started", result }))
+-            .catch(error => sendResponse({ success: false, error: String(error) }));
+-          break;
+-
+-        case "scrollPage":
+-          Promise.resolve(handlePageScroll(message.data))
+-            .then(result => sendResponse({ success: true, action: "page_scrolled", result }))
+-            .catch(error => sendResponse({ success: false, error: String(error) }));
+-          break;
+-
+-        case "getPageContent":
+-          Promise.resolve(handleGetPageContent(message.data))
+-            .then(result => sendResponse({ success: true, action: "page_content_extracted", result }))
+-            .catch(error => sendResponse({ success: false, error: String(error) }));
+-          break;
+-
+-        default:
+-          console.log("🤷 Unknown message type:", message.type);
+-          sendResponse({ success: false, error: "Unknown message type" });
+-      }
+-    } catch (error) {
+-      console.log("❌ Error handling message:", String(error));
+-      sendResponse({ success: false, error: String(error) });
++    if (to) {
++      const result = fillInput(selectors.to, to);
++      results.push(result.message);
+     }
+ 
+-    return true; // Keep message channel open for async responses
+-  });
+-
+-  /**
+-   * Handle form filling
+-   */
+-  function handleFormFilling(data) {
+-    console.log("📝 Filling form with data:", JSON.stringify(data));
+-
+-    try {
+-      // Handle simple selector-based filling
+-      if (data.selector && data.value) {
+-        const result = fillInput(data.selector, data.value);
+-        return result;
+-      }
+-      // Example: Fill flight search form
+-      else if (data.type === "flight") {
+-        const result = fillFlightForm(data);
+-        return result;
+-      } else {
+-        throw new Error("Invalid form filling data: missing selector/value or type");
+-      }
+-    } catch (error) {
+-      console.log(`❌ Error in handleFormFilling: ${error.message}`);
+-      throw error;
++    if (departDate) {
++      const result = fillInput(selectors.departDate, departDate);
++      results.push(result.message);
+     }
+-  }
+-
+-  /**
+-   * Fill flight search form
+-   */
+-  function fillFlightForm(data) {
+-    const { from, to, departDate, returnDate } = data;
+-    const results = [];
+-
+-    // Google Flights selectors
+-    const selectors = {
+-      from: "input[placeholder*=\"Where from\"]",
+-      to: "input[placeholder*=\"Where to\"]",
+-      departDate: "input[placeholder*=\"Departure\"]",
+-      returnDate: "input[placeholder*=\"Return\"]"
+-    };
+-
+-    try {
+-      if (from) {
+-        const result = fillInput(selectors.from, from);
+-        results.push(result.message);
+-      }
+ 
+-      if (to) {
+-        const result = fillInput(selectors.to, to);
+-        results.push(result.message);
+-      }
+-
+-      if (departDate) {
+-        const result = fillInput(selectors.departDate, departDate);
+-        results.push(result.message);
+-      }
+-
+-      if (returnDate) {
+-        const result = fillInput(selectors.returnDate, returnDate);
+-        results.push(result.message);
+-      }
+-
+-      return { success: true, message: `Flight form filled: ${results.join(', ')}` };
+-    } catch (error) {
+-      throw new Error(`Flight form filling failed: ${error.message}`);
++    if (returnDate) {
++      const result = fillInput(selectors.returnDate, returnDate);
++      results.push(result.message);
+     }
+-  }
+ 
+-  /**
+-   * Fill input field
+-   */
+-  function fillInput(selector, value) {
+-    const element = document.querySelector(selector);
+-    if (element) {
+-      element.value = value;
+-      element.dispatchEvent(new Event("input", { bubbles: true }));
+-      element.dispatchEvent(new Event("change", { bubbles: true }));
+-      console.log(`✅ Filled ${selector} with "${value}"`);
+-      return { success: true, message: `Filled ${selector} with "${value}"` };
+-    } else {
+-      const errorMessage = `Could not find element: ${selector}`;
+-      console.log(`❌ ${errorMessage}`);
+-      throw new Error(errorMessage);
+-    }
++    return { success: true, message: `Flight form filled: ${results.join(', ')}` };
++  } catch (error) {
++    throw new Error(`Flight form filling failed: ${error.message}`);
+   }
++}
+ 
+-  /**
+-   * Handle AI-driven DOM analysis and action execution
+-   */
+-  function handleAIDomAnalysis(data) {
+-    console.log("🔍 AI DOM Analysis requested:", data);
+-
+-    // Return current page DOM structure for AI analysis
+-    const domStructure = {
+-      url: window.location.href,
+-      title: document.title,
+-      forms: extractFormStructure(),
+-      inputs: extractInputElements(),
+-      buttons: extractButtonElements(),
+-      links: extractLinkElements()
+-    };
+-
+-    // Send DOM structure back to background script for AI processing
+-    chrome.runtime.sendMessage({
+-      type: "domAnalysisResult",
+-      data: domStructure,
+-      timestamp: Date.now()
+-    });
+-
+-    console.log("📊 DOM structure sent to AI:", domStructure);
++/**
++ * Fill input field
++ */
++function fillInput(selector, value) {
++  const element = document.querySelector(selector);
++  if (element) {
++    element.value = value;
++    element.dispatchEvent(new Event("input", { bubbles: true }));
++    element.dispatchEvent(new Event("change", { bubbles: true }));
++    console.log(`✅ Filled ${selector} with "${value}"`);
++    return { success: true, message: `Filled ${selector} with "${value}"` };
++  } else {
++    const errorMessage = `Could not find element: ${selector}`;
++    console.log(`❌ ${errorMessage}`);
++    throw new Error(errorMessage);
+   }
++}
+ 
+-  /**
+-   * Extract form structure for AI analysis
+-   */
+-  function extractFormStructure() {
+-    const forms = Array.from(document.querySelectorAll("form")).map(form => {
+-      const inputs = Array.from(form.querySelectorAll("input, select, textarea")).map(input => ({
+-        type: input.type || input.tagName.toLowerCase(),
+-        name: input.name,
+-        id: input.id,
+-        placeholder: input.placeholder,
+-        ariaLabel: input.getAttribute("aria-label"),
+-        className: input.className,
+-        selector: generateSelector(input)
+-      }));
+-
+-      return {
+-        id: form.id,
+-        className: form.className,
+-        action: form.action,
+-        method: form.method,
+-        inputs: inputs,
+-        selector: generateSelector(form)
+-      };
+-    });
++/**
++ * Handle AI-driven DOM analysis and action execution
++ */
++function handleAIDomAnalysis(data) {
++  console.log("🔍 AI DOM Analysis requested:", data);
++
++  // Return current page DOM structure for AI analysis
++  const domStructure = {
++    url: window.location.href,
++    title: document.title,
++    forms: extractFormStructure(),
++    inputs: extractInputElements(),
++    buttons: extractButtonElements(),
++    links: extractLinkElements()
++  };
++
++  // Send DOM structure back to background script for AI processing
++  chrome.runtime.sendMessage({
++    type: "domAnalysisResult",
++    data: domStructure,
++    timestamp: Date.now()
++  });
+ 
+-    return forms;
+-  }
++  console.log("📊 DOM structure sent to AI:", domStructure);
++}
+ 
+-  /**
+-   * Extract input elements for AI analysis
+-   */
+-  function extractInputElements() {
+-    return Array.from(document.querySelectorAll("input, select, textarea")).map(input => ({
++/**
++ * Extract form structure for AI analysis
++ */
++function extractFormStructure() {
++  const forms = Array.from(document.querySelectorAll("form")).map(form => {
++    const inputs = Array.from(form.querySelectorAll("input, select, textarea")).map(input => ({
+       type: input.type || input.tagName.toLowerCase(),
+       name: input.name,
+       id: input.id,
+       placeholder: input.placeholder,
+       ariaLabel: input.getAttribute("aria-label"),
+-      value: input.value,
+       className: input.className,
+-      selector: generateSelector(input),
+-      visible: isElementVisible(input),
+-      interactable: !input.disabled && !input.readOnly
++      selector: generateSelector(input)
+     }));
+-  }
+ 
+-  /**
+-   * Extract button elements for AI analysis
+-   */
+-  function extractButtonElements() {
+-    return Array.from(document.querySelectorAll("button, input[type=\"submit\"], input[type=\"button\"]")).map(button => ({
+-      type: button.type || "button",
+-      text: button.textContent || button.value,
+-      id: button.id,
+-      className: button.className,
+-      ariaLabel: button.getAttribute("aria-label"),
+-      selector: generateSelector(button),
+-      visible: isElementVisible(button),
+-      clickable: !button.disabled
+-    }));
+-  }
++    return {
++      id: form.id,
++      className: form.className,
++      action: form.action,
++      method: form.method,
++      inputs: inputs,
++      selector: generateSelector(form)
++    };
++  });
+ 
+-  /**
+-   * Extract link elements for AI analysis
+-   */
+-  function extractLinkElements() {
+-    return Array.from(document.querySelectorAll("a[href]")).map(link => ({
+-      text: link.textContent.trim(),
+-      href: link.href,
+-      id: link.id,
+-      className: link.className,
+-      selector: generateSelector(link),
+-      visible: isElementVisible(link)
+-    }));
+-  }
++  return forms;
++}
+ 
+-  /**
+-   * Generate unique CSS selector for element
+-   */
+-  function generateSelector(element) {
+-    if (element.id) {
+-      return "#" + element.id;
+-    }
++/**
++ * Extract input elements for AI analysis
++ */
++function extractInputElements() {
++  return Array.from(document.querySelectorAll("input, select, textarea")).map(input => ({
++    type: input.type || input.tagName.toLowerCase(),
++    name: input.name,
++    id: input.id,
++    placeholder: input.placeholder,
++    ariaLabel: input.getAttribute("aria-label"),
++    value: input.value,
++    className: input.className,
++    selector: generateSelector(input),
++    visible: isElementVisible(input),
++    interactable: !input.disabled && !input.readOnly
++  }));
++}
+ 
+-    let selector = element.tagName.toLowerCase();
++/**
++ * Extract button elements for AI analysis
++ */
++function extractButtonElements() {
++  return Array.from(document.querySelectorAll("button, input[type=\"submit\"], input[type=\"button\"]")).map(button => ({
++    type: button.type || "button",
++    text: button.textContent || button.value,
++    id: button.id,
++    className: button.className,
++    ariaLabel: button.getAttribute("aria-label"),
++    selector: generateSelector(button),
++    visible: isElementVisible(button),
++    clickable: !button.disabled
++  }));
++}
+ 
+-    if (element.className) {
+-      selector += "." + element.className.split(" ").join(".");
+-    }
++/**
++ * Extract link elements for AI analysis
++ */
++function extractLinkElements() {
++  return Array.from(document.querySelectorAll("a[href]")).map(link => ({
++    text: link.textContent.trim(),
++    href: link.href,
++    id: link.id,
++    className: link.className,
++    selector: generateSelector(link),
++    visible: isElementVisible(link)
++  }));
++}
+ 
+-    // Add index if multiple elements match
+-    const siblings = Array.from(element.parentElement?.children || []).filter(
+-      el => el.tagName === element.tagName && el.className === element.className
+-    );
++/**
++ * Generate unique CSS selector for element
++ */
++function generateSelector(element) {
++  if (element.id) {
++    return "#" + element.id;
++  }
+ 
+-    if (siblings.length > 1) {
+-      const index = siblings.indexOf(element);
+-      selector += `:nth-of-type(${index + 1})`;
+-    }
++  let selector = element.tagName.toLowerCase();
+ 
+-    return selector;
++  if (element.className) {
++    selector += "." + element.className.split(" ").join(".");
+   }
+ 
+-  /**
+-   * Check if element is visible to user
+-   */
+-  function isElementVisible(element) {
+-    const style = window.getComputedStyle(element);
+-    return style.display !== "none" &&
+-      style.visibility !== "hidden" &&
+-      style.opacity !== "0" &&
+-      element.offsetWidth > 0 &&
+-      element.offsetHeight > 0;
++  // Add index if multiple elements match
++  const siblings = Array.from(element.parentElement?.children || []).filter(
++    el => el.tagName === element.tagName && el.className === element.className
++  );
++
++  if (siblings.length > 1) {
++    const index = siblings.indexOf(element);
++    selector += `:nth-of-type(${index + 1})`;
+   }
+ 
+-  /**
+-   * Handle element clicking
+-   */
+-  function handleElementClick(data) {
+-    console.log("👆 Clicking element:", data);
++  return selector;
++}
+ 
+-    const element = document.querySelector(data.selector);
+-    if (element) {
+-      element.click();
+-      console.log(`✅ Clicked element: ${data.selector}`);
+-    } else {
+-      console.log(`❌ Could not find element to click: ${data.selector}`);
+-    }
+-  }
++/**
++ * Check if element is visible to user
++ */
++function isElementVisible(element) {
++  const style = window.getComputedStyle(element);
++  return style.display !== "none" &&
++    style.visibility !== "hidden" &&
++    style.opacity !== "0" &&
++    element.offsetWidth > 0 &&
++    element.offsetHeight > 0;
++}
+ 
+-  /**
+-   * Handle data extraction
+-   */
+-  function handleDataExtraction(data) {
+-    console.log("🔍 Extracting data:", data);
+-
+-    const elements = document.querySelectorAll(data.selector);
+-    const extractedData = Array.from(elements).map(el => ({
+-      text: el.textContent.trim(),
+-      href: el.href,
+-      className: el.className
+-    }));
++/**
++ * Handle element clicking
++ */
++function handleElementClick(data) {
++  console.log("👆 Clicking element:", data);
+ 
+-    // Send data back to background script
+-    chrome.runtime.sendMessage({
+-      type: "extractedData",
+-      data: extractedData
+-    });
++  const element = document.querySelector(data.selector);
++  if (element) {
++    element.click();
++    console.log(`✅ Clicked element: ${data.selector}`);
++  } else {
++    console.log(`❌ Could not find element to click: ${data.selector}`);
+   }
++}
+ 
+-  /**
+-   * Handle screenshot request
+-   */
+-  function handleScreenshot(data) {
+-    console.log("📸 Taking screenshot:", data);
+-
+-    // Mark important elements for screenshot
+-    const elements = document.querySelectorAll(data.selector || "*");
+-    elements.forEach((el, index) => {
+-      if (index < 10) { // Limit to first 10 elements
+-        el.style.outline = "2px solid #ff6b6b";
+-        el.style.outlineOffset = "2px";
+-      }
+-    });
++/**
++ * Handle data extraction
++ */
++function handleDataExtraction(data) {
++  console.log("🔍 Extracting data:", data);
++
++  const elements = document.querySelectorAll(data.selector);
++  const extractedData = Array.from(elements).map(el => ({
++    text: el.textContent.trim(),
++    href: el.href,
++    className: el.className
++  }));
++
++  // Send data back to background script
++  chrome.runtime.sendMessage({
++    type: "extractedData",
++    data: extractedData
++  });
++}
+ 
+-    // Remove highlights after a delay
+-    setTimeout(() => {
+-      elements.forEach(el => {
+-        el.style.outline = "";
+-        el.style.outlineOffset = "";
+-      });
+-    }, 3000);
+-  }
++/**
++ * Handle screenshot request
++ */
++function handleScreenshot(data) {
++  console.log("📸 Taking screenshot:", data);
++
++  // Mark important elements for screenshot
++  const elements = document.querySelectorAll(data.selector || "*");
++  elements.forEach((el, index) => {
++    if (index < 10) { // Limit to first 10 elements
++      el.style.outline = "2px solid #ff6b6b";
++      el.style.outlineOffset = "2px";
++    }
++  });
+ 
+-  /**
+-   * Auto-detect and enhance forms
+-   */
+-  function enhanceForms() {
+-    const forms = document.querySelectorAll("form");
+-    forms.forEach(form => {
+-      // Add Vibe AI enhancement marker
+-      form.setAttribute("data-vibe-enhanced", "true");
+-
+-      // Add visual indicator
+-      const indicator = document.createElement("div");
+-      indicator.innerHTML = "🤖 Enhanced by Vibe AI";
+-      indicator.style.cssText = `
++  // Remove highlights after a delay
++  setTimeout(() => {
++    elements.forEach(el => {
++      el.style.outline = "";
++      el.style.outlineOffset = "";
++    });
++  }, 3000);
++}
++
++/**
++ * Auto-detect and enhance forms
++ */
++function enhanceForms() {
++  const forms = document.querySelectorAll("form");
++  forms.forEach(form => {
++    // Add Vibe AI enhancement marker
++    form.setAttribute("data-vibe-enhanced", "true");
++
++    // Add visual indicator
++    const indicator = document.createElement("div");
++    indicator.innerHTML = "🤖 Enhanced by Vibe AI";
++    indicator.style.cssText = `
+         position: absolute;
+         top: -25px;
+         right: 0;
+@@ -448,376 +447,375 @@ import * as buildDomTree from './lib/buildDomTree.js';
+         pointer-events: none;
+       `;
+ 
+-      form.style.position = "relative";
+-      form.appendChild(indicator);
+-    });
+-  }
++    form.style.position = "relative";
++    form.appendChild(indicator);
++  });
++}
+ 
+-  /**
+-   * Monitor page changes
+-   */
+-  function observePageChanges() {
+-    const observer = new MutationObserver((mutations) => {
+-      mutations.forEach((mutation) => {
+-        if (mutation.type === "childList") {
+-          // Check for new forms
+-          mutation.addedNodes.forEach((node) => {
+-            if (node.nodeType === Node.ELEMENT_NODE) {
+-              const forms = node.querySelectorAll ? node.querySelectorAll("form") : [];
+-              if (forms.length > 0) {
+-                console.log("🔄 New forms detected, enhancing...");
+-                enhanceForms();
+-              }
++/**
++ * Monitor page changes
++ */
++function observePageChanges() {
++  const observer = new MutationObserver((mutations) => {
++    mutations.forEach((mutation) => {
++      if (mutation.type === "childList") {
++        // Check for new forms
++        mutation.addedNodes.forEach((node) => {
++          if (node.nodeType === Node.ELEMENT_NODE) {
++            const forms = node.querySelectorAll ? node.querySelectorAll("form") : [];
++            if (forms.length > 0) {
++              console.log("🔄 New forms detected, enhancing...");
++              enhanceForms();
+             }
+-          });
+-        }
+-      });
++          }
++        });
++      }
+     });
++  });
+ 
+-    observer.observe(document.body, {
+-      childList: true,
+-      subtree: true
+-    });
++  observer.observe(document.body, {
++    childList: true,
++    subtree: true
++  });
++}
++
++/**
++ * Handle page scrolling
++ */
++function handlePageScroll(data) {
++  console.log("🔄 Scrolling page:", data);
++
++  const { direction, numPages } = data;
++  const scrollAmount = numPages * window.innerHeight;
++
++  if (direction === "down") {
++    window.scrollBy(0, scrollAmount);
++  } else if (direction === "up") {
++    window.scrollBy(0, -scrollAmount);
+   }
+ 
+-  /**
+-   * Handle page scrolling
+-   */
+-  function handlePageScroll(data) {
+-    console.log("🔄 Scrolling page:", data);
++  console.log(`✅ Scrolled ${direction} by ${numPages} page(s)`);
++}
+ 
+-    const { direction, numPages } = data;
+-    const scrollAmount = numPages * window.innerHeight;
++/**
++ * Get clean page content with text and input fields
++ * This extracts all text content and preserves input fields with full HTML tags
++ */
++function handleGetPageContent(data) {
++  console.log("📄 Extracting page content as markdown with HTML controls...");
+ 
+-    if (direction === "down") {
+-      window.scrollBy(0, scrollAmount);
+-    } else if (direction === "up") {
+-      window.scrollBy(0, -scrollAmount);
++  try {
++    // Use the existing content extractor if available
++    if (window.VibeAI && window.VibeAI.extractPageContentAsMarkdown) {
++      return handleGetPageContentWithExtractor();
+     }
+ 
+-    console.log(`✅ Scrolled ${direction} by ${numPages} page(s)`);
++    // Fallback to manual extraction if content extractor is not available
++    return handleGetPageContentFallback();
++
++  } catch (error) {
++    console.log(`❌ Error extracting page content: ${error.message}`);
++    throw error;
+   }
++}
+ 
+-  /**
+-   * Get clean page content with text and input fields
+-   * This extracts all text content and preserves input fields with full HTML tags
+-   */
+-  function handleGetPageContent(data) {
+-    console.log("📄 Extracting page content as markdown with HTML controls...");
++/**
++ * Enhanced page content extraction using the content extractor
++ */
++function handleGetPageContentWithExtractor() {
++  // Extract markdown content
++  const markdownResult = window.VibeAI.extractPageContentAsMarkdown();
+ 
+-    try {
+-      // Use the existing content extractor if available
+-      if (window.VibeAI && window.VibeAI.extractPageContentAsMarkdown) {
+-        return handleGetPageContentWithExtractor();
+-      }
+-      
+-      // Fallback to manual extraction if content extractor is not available
+-      return handleGetPageContentFallback();
++  // Extract interactive elements
++  const interactiveResult = window.VibeAI.extractInteractiveElements();
+ 
+-    } catch (error) {
+-      console.log(`❌ Error extracting page content: ${error.message}`);
+-      throw error;
+-    }
++  if (!markdownResult.success) {
++    throw new Error(markdownResult.error || 'Failed to extract markdown content');
+   }
+ 
+-  /**
+-   * Enhanced page content extraction using the content extractor
+-   */
+-  function handleGetPageContentWithExtractor() {
+-    // Extract markdown content
+-    const markdownResult = window.VibeAI.extractPageContentAsMarkdown();
+-    
+-    // Extract interactive elements
+-    const interactiveResult = window.VibeAI.extractInteractiveElements();
+-    
+-    if (!markdownResult.success) {
+-      throw new Error(markdownResult.error || 'Failed to extract markdown content');
++  // Combine markdown with interactive elements
++  const combinedContent = combineMarkdownWithControls(
++    markdownResult.content,
++    interactiveResult.success ? interactiveResult.elements : []
++  );
++
++  const result = {
++    pageInfo: {
++      title: document.title,
++      url: window.location.href,
++      textLength: combinedContent.length,
++      inputCount: interactiveResult.success ? interactiveResult.count : 0,
++      extractionMethod: 'enhanced'
++    },
++    content: combinedContent,
++    interactiveElements: interactiveResult.success ? interactiveResult.elements : []
++  };
++
++  console.log(`✅ Enhanced page content extracted: ${combinedContent.length} chars, ${result.pageInfo.inputCount} controls`);
++  return result;
++}
++
++/**
++ * Fallback content extraction without content extractor
++ */
++function handleGetPageContentFallback() {
++  // Get all interactive elements with their full HTML
++  const inputElements = [];
++  const inputs = document.querySelectorAll('input, textarea, select, button[type="submit"], button:not([disabled])');
++
++  inputs.forEach((input, index) => {
++    if (isElementVisible(input)) {
++      // Get the full HTML of the input element with enhanced context
++      const inputHtml = getEnhancedInputHtml(input);
++      const context = getInputContext(input);
++
++      inputElements.push({
++        index: index,
++        html: inputHtml,
++        context: context,
++        type: input.type || input.tagName.toLowerCase(),
++        value: input.value || '',
++        placeholder: input.placeholder || '',
++        name: input.name || '',
++        id: input.id || '',
++        selector: generateSimpleSelector(input)
++      });
+     }
+-    
+-    // Combine markdown with interactive elements
+-    const combinedContent = combineMarkdownWithControls(
+-      markdownResult.content,
+-      interactiveResult.success ? interactiveResult.elements : []
+-    );
+-    
+-    const result = {
+-      pageInfo: {
+-        title: document.title,
+-        url: window.location.href,
+-        textLength: combinedContent.length,
+-        inputCount: interactiveResult.success ? interactiveResult.count : 0,
+-        extractionMethod: 'enhanced'
+-      },
+-      content: combinedContent,
+-      interactiveElements: interactiveResult.success ? interactiveResult.elements : []
+-    };
+-    
+-    console.log(`✅ Enhanced page content extracted: ${combinedContent.length} chars, ${result.pageInfo.inputCount} controls`);
+-    return result;
+-  }
++  });
+ 
+-  /**
+-   * Fallback content extraction without content extractor
+-   */
+-  function handleGetPageContentFallback() {
+-    // Get all interactive elements with their full HTML
+-    const inputElements = [];
+-    const inputs = document.querySelectorAll('input, textarea, select, button[type="submit"], button:not([disabled])');
+-
+-    inputs.forEach((input, index) => {
+-      if (isElementVisible(input)) {
+-        // Get the full HTML of the input element with enhanced context
+-        const inputHtml = getEnhancedInputHtml(input);
+-        const context = getInputContext(input);
+-
+-        inputElements.push({
+-          index: index,
+-          html: inputHtml,
+-          context: context,
+-          type: input.type || input.tagName.toLowerCase(),
+-          value: input.value || '',
+-          placeholder: input.placeholder || '',
+-          name: input.name || '',
+-          id: input.id || '',
+-          selector: generateSimpleSelector(input)
+-        });
+-      }
+-    });
++  // Convert page content to basic markdown
++  const markdownContent = convertToBasicMarkdown(document.body);
+ 
+-    // Convert page content to basic markdown
+-    const markdownContent = convertToBasicMarkdown(document.body);
+-    
+-    // Combine markdown with controls
+-    const combinedContent = combineMarkdownWithControls(markdownContent, inputElements);
+-
+-    const result = {
+-      pageInfo: {
+-        title: document.title,
+-        url: window.location.href,
+-        textLength: combinedContent.length,
+-        inputCount: inputElements.length,
+-        extractionMethod: 'fallback'
+-      },
+-      content: combinedContent,
+-      interactiveElements: inputElements
+-    };
++  // Combine markdown with controls
++  const combinedContent = combineMarkdownWithControls(markdownContent, inputElements);
+ 
+-    console.log(`✅ Fallback page content extracted: ${combinedContent.length} chars, ${inputElements.length} controls`);
+-    return result;
+-  }
++  const result = {
++    pageInfo: {
++      title: document.title,
++      url: window.location.href,
++      textLength: combinedContent.length,
++      inputCount: inputElements.length,
++      extractionMethod: 'fallback'
++    },
++    content: combinedContent,
++    interactiveElements: inputElements
++  };
++
++  console.log(`✅ Fallback page content extracted: ${combinedContent.length} chars, ${inputElements.length} controls`);
++  return result;
++}
+ 
+-  /**
+-   * Get clean text content from an element, stripping all HTML tags
+-   */
+-  function getCleanTextContent(element) {
+-    // Clone the element to avoid modifying the original
+-    const clone = element.cloneNode(true);
++/**
++ * Get clean text content from an element, stripping all HTML tags
++ */
++function getCleanTextContent(element) {
++  // Clone the element to avoid modifying the original
++  const clone = element.cloneNode(true);
+ 
+-    // Remove script and style elements completely
+-    const scriptsAndStyles = clone.querySelectorAll('script, style, noscript');
+-    scriptsAndStyles.forEach(el => el.remove());
++  // Remove script and style elements completely
++  const scriptsAndStyles = clone.querySelectorAll('script, style, noscript');
++  scriptsAndStyles.forEach(el => el.remove());
+ 
+-    // Remove input elements from text extraction (they're handled separately)
+-    const inputs = clone.querySelectorAll('input, textarea, select, button');
+-    inputs.forEach(el => el.remove());
++  // Remove input elements from text extraction (they're handled separately)
++  const inputs = clone.querySelectorAll('input, textarea, select, button');
++  inputs.forEach(el => el.remove());
+ 
+-    // Get text content and clean it up
+-    let text = clone.textContent || clone.innerText || '';
++  // Get text content and clean it up
++  let text = clone.textContent || clone.innerText || '';
+ 
+-    // Clean up whitespace: replace multiple whitespace with single space
+-    text = text.replace(/\s+/g, ' ').trim();
++  // Clean up whitespace: replace multiple whitespace with single space
++  text = text.replace(/\s+/g, ' ').trim();
+ 
+-    return text;
++  return text;
++}
++
++/**
++ * Get context information for an input element (nearby labels, text)
++ */
++function getInputContext(input) {
++  const context = [];
++
++  // Check for associated label
++  if (input.id) {
++    const label = document.querySelector(`label[for="${input.id}"]`);
++    if (label) {
++      context.push(`Label: ${label.textContent.trim()}`);
++    }
+   }
+ 
+-  /**
+-   * Get context information for an input element (nearby labels, text)
+-   */
+-  function getInputContext(input) {
+-    const context = [];
+-
+-    // Check for associated label
+-    if (input.id) {
+-      const label = document.querySelector(`label[for="${input.id}"]`);
+-      if (label) {
+-        context.push(`Label: ${label.textContent.trim()}`);
+-      }
++  // Check for parent label
++  const parentLabel = input.closest('label');
++  if (parentLabel) {
++    const labelText = parentLabel.textContent.replace(input.value, '').trim();
++    if (labelText) {
++      context.push(`Parent Label: ${labelText}`);
+     }
++  }
+ 
+-    // Check for parent label
+-    const parentLabel = input.closest('label');
+-    if (parentLabel) {
+-      const labelText = parentLabel.textContent.replace(input.value, '').trim();
+-      if (labelText) {
+-        context.push(`Parent Label: ${labelText}`);
++  // Check for nearby text (previous/next siblings)
++  const prevSibling = input.previousElementSibling;
++  if (prevSibling && prevSibling.textContent.trim()) {
++    const prevText = prevSibling.textContent.trim().slice(-50); // Last 50 chars
++    context.push(`Before: ${prevText}`);
++  }
++
++  const nextSibling = input.nextElementSibling;
++  if (nextSibling && nextSibling.textContent.trim()) {
++    const nextText = nextSibling.textContent.trim().slice(0, 50); // First 50 chars
++    context.push(`After: ${nextText}`);
++  }
++
++  return context.join(' | ');
++}
++
++/**
++ * Combine markdown content with interactive controls
++ */
++function combineMarkdownWithControls(markdownContent, interactiveElements) {
++  let combinedContent = markdownContent;
++
++  // If we have interactive elements, add them as a section
++  if (interactiveElements && interactiveElements.length > 0) {
++    combinedContent += '\n\n## Interactive Elements\n\n';
++
++    interactiveElements.forEach((element, index) => {
++      // Add context as markdown comment if available
++      if (element.context) {
++        combinedContent += `<!-- Context: ${element.context} -->\n`;
+       }
+-    }
+ 
+-    // Check for nearby text (previous/next siblings)
+-    const prevSibling = input.previousElementSibling;
+-    if (prevSibling && prevSibling.textContent.trim()) {
+-      const prevText = prevSibling.textContent.trim().slice(-50); // Last 50 chars
+-      context.push(`Before: ${prevText}`);
+-    }
++      // Add the HTML element
++      const htmlElement = element.html || element.outerHTML ||
++        `<${element.tagName}${element.type ? ` type="${element.type}"` : ''}${element.name ? ` name="${element.name}"` : ''}${element.id ? ` id="${element.id}"` : ''}${element.placeholder ? ` placeholder="${element.placeholder}"` : ''}${element.value ? ` value="${element.value}"` : ''}>`;
+ 
+-    const nextSibling = input.nextElementSibling;
+-    if (nextSibling && nextSibling.textContent.trim()) {
+-      const nextText = nextSibling.textContent.trim().slice(0, 50); // First 50 chars
+-      context.push(`After: ${nextText}`);
+-    }
++      combinedContent += htmlElement + '\n\n';
++    });
++  }
+ 
+-    return context.join(' | ');
++  return combinedContent;
++}
++
++/**
++ * Get enhanced HTML for input element with better context
++ */
++function getEnhancedInputHtml(input) {
++  // Clone the input to avoid modifying original
++  const clone = input.cloneNode(true);
++
++  // Add data attributes for better identification
++  if (!clone.id && !clone.name) {
++    clone.setAttribute('data-vibe-index', Array.from(document.querySelectorAll(input.tagName.toLowerCase())).indexOf(input));
+   }
+ 
+-  /**
+-   * Combine markdown content with interactive controls
+-   */
+-  function combineMarkdownWithControls(markdownContent, interactiveElements) {
+-    let combinedContent = markdownContent;
+-    
+-    // If we have interactive elements, add them as a section
+-    if (interactiveElements && interactiveElements.length > 0) {
+-      combinedContent += '\n\n## Interactive Elements\n\n';
+-      
+-      interactiveElements.forEach((element, index) => {
+-        // Add context as markdown comment if available
+-        if (element.context) {
+-          combinedContent += `<!-- Context: ${element.context} -->\n`;
+-        }
+-        
+-        // Add the HTML element
+-        const htmlElement = element.html || element.outerHTML || 
+-          `<${element.tagName}${element.type ? ` type="${element.type}"` : ''}${element.name ? ` name="${element.name}"` : ''}${element.id ? ` id="${element.id}"` : ''}${element.placeholder ? ` placeholder="${element.placeholder}"` : ''}${element.value ? ` value="${element.value}"` : ''}>`;
+-        
+-        combinedContent += htmlElement + '\n\n';
+-      });
+-    }
+-    
+-    return combinedContent;
++  // Ensure important attributes are preserved
++  if (input.placeholder && !clone.hasAttribute('placeholder')) {
++    clone.setAttribute('placeholder', input.placeholder);
+   }
+ 
+-  /**
+-   * Get enhanced HTML for input element with better context
+-   */
+-  function getEnhancedInputHtml(input) {
+-    // Clone the input to avoid modifying original
+-    const clone = input.cloneNode(true);
+-    
+-    // Add data attributes for better identification
+-    if (!clone.id && !clone.name) {
+-      clone.setAttribute('data-vibe-index', Array.from(document.querySelectorAll(input.tagName.toLowerCase())).indexOf(input));
+-    }
+-    
+-    // Ensure important attributes are preserved
+-    if (input.placeholder && !clone.hasAttribute('placeholder')) {
+-      clone.setAttribute('placeholder', input.placeholder);
+-    }
+-    
+-    if (input.value && !clone.hasAttribute('value')) {
+-      clone.setAttribute('value', input.value);
+-    }
+-    
+-    return clone.outerHTML;
++  if (input.value && !clone.hasAttribute('value')) {
++    clone.setAttribute('value', input.value);
+   }
+ 
+-  /**
+-   * Convert HTML content to basic markdown
+-   */
+-  function convertToBasicMarkdown(element) {
+-    if (!element) return '';
+-    
+-    // Clone to avoid modifying original
+-    const clone = element.cloneNode(true);
+-    
+-    // Remove unwanted elements
+-    const unwanted = clone.querySelectorAll('script, style, noscript, nav, aside, footer, .advertisement, .ad, .ads');
+-    unwanted.forEach(el => el.remove());
+-    
+-    // Remove interactive elements (they'll be handled separately)
+-    const interactive = clone.querySelectorAll('input, textarea, select, button');
+-    interactive.forEach(el => el.remove());
+-    
+-    // Basic HTML to markdown conversion
+-    let content = clone.innerHTML || '';
+-    
+-    // Convert headings
+-    content = content.replace(/<h1[^>]*>(.*?)<\/h1>/gi, '# $1\n\n');
+-    content = content.replace(/<h2[^>]*>(.*?)<\/h2>/gi, '## $1\n\n');
+-    content = content.replace(/<h3[^>]*>(.*?)<\/h3>/gi, '### $1\n\n');
+-    content = content.replace(/<h4[^>]*>(.*?)<\/h4>/gi, '#### $1\n\n');
+-    content = content.replace(/<h5[^>]*>(.*?)<\/h5>/gi, '##### $1\n\n');
+-    content = content.replace(/<h6[^>]*>(.*?)<\/h6>/gi, '###### $1\n\n');
+-    
+-    // Convert paragraphs
+-    content = content.replace(/<p[^>]*>(.*?)<\/p>/gi, '$1\n\n');
+-    
+-    // Convert line breaks
+-    content = content.replace(/<br\s*\/?>/gi, '\n');
+-    
+-    // Convert bold and italic
+-    content = content.replace(/<(strong|b)[^>]*>(.*?)<\/(strong|b)>/gi, '**$2**');
+-    content = content.replace(/<(em|i)[^>]*>(.*?)<\/(em|i)>/gi, '*$2*');
+-    
+-    // Convert links
+-    content = content.replace(/<a[^>]*href=["']([^"']*)["'][^>]*>(.*?)<\/a>/gi, '[$2]($1)');
+-    
+-    // Convert lists
+-    content = content.replace(/<ul[^>]*>/gi, '');
+-    content = content.replace(/<\/ul>/gi, '\n');
+-    content = content.replace(/<ol[^>]*>/gi, '');
+-    content = content.replace(/<\/ol>/gi, '\n');
+-    content = content.replace(/<li[^>]*>(.*?)<\/li>/gi, '- $1\n');
+-    
+-    // Remove remaining HTML tags
+-    content = content.replace(/<[^>]*>/g, '');
+-    
+-    // Clean up whitespace
+-    content = content.replace(/\n{3,}/g, '\n\n');
+-    content = content.replace(/^\s+|\s+$/g, '');
+-    
+-    return content;
++  return clone.outerHTML;
++}
++
++/**
++ * Convert HTML content to basic markdown
++ */
++function convertToBasicMarkdown(element) {
++  if (!element) return '';
++
++  // Clone to avoid modifying original
++  const clone = element.cloneNode(true);
++
++  // Remove unwanted elements
++  const unwanted = clone.querySelectorAll('script, style, noscript, nav, aside, footer, .advertisement, .ad, .ads');
++  unwanted.forEach(el => el.remove());
++
++  // Remove interactive elements (they'll be handled separately)
++  const interactive = clone.querySelectorAll('input, textarea, select, button');
++  interactive.forEach(el => el.remove());
++
++  // Basic HTML to markdown conversion
++  let content = clone.innerHTML || '';
++
++  // Convert headings
++  content = content.replace(/<h1[^>]*>(.*?)<\/h1>/gi, '# $1\n\n');
++  content = content.replace(/<h2[^>]*>(.*?)<\/h2>/gi, '## $1\n\n');
++  content = content.replace(/<h3[^>]*>(.*?)<\/h3>/gi, '### $1\n\n');
++  content = content.replace(/<h4[^>]*>(.*?)<\/h4>/gi, '#### $1\n\n');
++  content = content.replace(/<h5[^>]*>(.*?)<\/h5>/gi, '##### $1\n\n');
++  content = content.replace(/<h6[^>]*>(.*?)<\/h6>/gi, '###### $1\n\n');
++
++  // Convert paragraphs
++  content = content.replace(/<p[^>]*>(.*?)<\/p>/gi, '$1\n\n');
++
++  // Convert line breaks
++  content = content.replace(/<br\s*\/?>/gi, '\n');
++
++  // Convert bold and italic
++  content = content.replace(/<(strong|b)[^>]*>(.*?)<\/(strong|b)>/gi, '**$2**');
++  content = content.replace(/<(em|i)[^>]*>(.*?)<\/(em|i)>/gi, '*$2*');
++
++  // Convert links
++  content = content.replace(/<a[^>]*href=["']([^"']*)["'][^>]*>(.*?)<\/a>/gi, '[$2]($1)');
++
++  // Convert lists
++  content = content.replace(/<ul[^>]*>/gi, '');
++  content = content.replace(/<\/ul>/gi, '\n');
++  content = content.replace(/<ol[^>]*>/gi, '');
++  content = content.replace(/<\/ol>/gi, '\n');
++  content = content.replace(/<li[^>]*>(.*?)<\/li>/gi, '- $1\n');
++
++  // Remove remaining HTML tags
++  content = content.replace(/<[^>]*>/g, '');
++
++  // Clean up whitespace
++  content = content.replace(/\n{3,}/g, '\n\n');
++  content = content.replace(/^\s+|\s+$/g, '');
++
++  return content;
++}
++
++/**
++ * Generate simple CSS selector for element
++ */
++function generateSimpleSelector(element) {
++  // Prefer ID
++  if (element.id) {
++    return `#${element.id}`;
+   }
+ 
+-  /**
+-   * Generate simple CSS selector for element
+-   */
+-  function generateSimpleSelector(element) {
+-    // Prefer ID
+-    if (element.id) {
+-      return `#${element.id}`;
+-    }
+-    
+-    // Use name attribute
+-    if (element.name) {
+-      return `[name="${element.name}"]`;
+-    }
+-    
+-    // Use type and other attributes
+-    let selector = element.tagName.toLowerCase();
+-    
+-    if (element.type) {
+-      selector += `[type="${element.type}"]`;
+-    }
+-    
+-    if (element.className) {
+-      const classes = element.className.split(' ').filter(c => c.trim());
+-      if (classes.length > 0) {
+-        selector += '.' + classes[0];
+-      }
+-    }
+-    
+-    return selector;
++  // Use name attribute
++  if (element.name) {
++    return `[name="${element.name}"]`;
+   }
+ 
+-  // Initialize when DOM is ready
+-  if (document.readyState === "loading") {
+-    document.addEventListener("DOMContentLoaded", init);
+-  } else {
+-    init();
++  // Use type and other attributes
++  let selector = element.tagName.toLowerCase();
++
++  if (element.type) {
++    selector += `[type="${element.type}"]`;
+   }
+ 
+-  function init() {
+-    console.log("🚀 Vibe AI content script fully initialized");
+-    enhanceForms();
+-    observePageChanges();
++  if (element.className) {
++    const classes = element.className.split(' ').filter(c => c.trim());
++    if (classes.length > 0) {
++      selector += '.' + classes[0];
++    }
+   }
++
++  return selector;
++}
++
++// Initialize when DOM is ready
++if (document.readyState === "loading") {
++  document.addEventListener("DOMContentLoaded", init);
++} else {
++  init();
++}
++
++function init() {
++  enhanceForms();
++  observePageChanges();
++}
+-- 
+2.50.0
+

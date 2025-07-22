@@ -1,0 +1,236 @@
+From 31f9e07ad2311e17ed4a146da741370d843d5069 Mon Sep 17 00:00:00 2001
+From: Den <2119348+dzianisv@users.noreply.github.com>
+Date: Tue, 22 Jul 2025 12:09:47 +0300
+Subject: [PATCH 04/10] Improve ai agent prompt
+
+---
+ chrome/browser/resources/vibe/ai_agent.js     | 39 +++++++++----------
+ .../resources/vibe/ai_tools.extension.js      |  4 +-
+ chrome/browser/resources/vibe/content.js      |  8 ++--
+ .../resources/vibe/lib/contentExtractor.js    |  6 +--
+ 4 files changed, 29 insertions(+), 28 deletions(-)
+
+diff --git a/chrome/browser/resources/vibe/ai_agent.js b/chrome/browser/resources/vibe/ai_agent.js
+index 84bcfce430..6a8cce076b 100644
+--- a/chrome/browser/resources/vibe/ai_agent.js
++++ b/chrome/browser/resources/vibe/ai_agent.js
+@@ -73,7 +73,7 @@ export class VibeLangchainAgent {
+     }
+     
+     // Log the resolved configuration
+-    console.log(`🔧 [AI_AGENT] [ai_agent.js] Resolved config:`, {
++    console.log(`🔧 [AI_AGENT] Resolved config:`, {
+       provider: provider,
+       model: config.model,
+       modelName,
+@@ -85,7 +85,7 @@ export class VibeLangchainAgent {
+       throw new Error("API key not configured. Please set your API key in settings or environment variables.");
+     }
+ 
+-    console.log(`🤖 [AI_AGENT] [ai_agent.js] Using model: ${modelName}`);
++    console.log(`🤖 [AI_AGENT] Using model: ${modelName}`);
+ 
+     // Initialize LangChain model with provider-specific configuration
+     const modelConfig = {
+@@ -102,7 +102,7 @@ export class VibeLangchainAgent {
+       // Note: Gemini and Anthropic use fixed endpoints, so baseURL changes aren't supported
+     }
+     
+-    console.log(`🔧 [AI_AGENT] [ai_agent.js] Model config:`, { 
++    console.log(`🔧 [AI_AGENT] Model config:`, { 
+       modelName, 
+       hasApiKey: !!modelConfig.apiKey,
+       hasBaseURL: !!modelConfig.baseURL 
+@@ -139,13 +139,17 @@ CRITICAL WORKFLOW RULES:
+ - The get_page_content tool shows you exactly what form fields and interactive elements are available
+ - Use the actual element selectors from get_page_content output - DO NOT guess selectors
+ - Only attempt form filling after you have confirmed the target elements exist on the page
+-
++- After calling the fill_form_field tool, get page content again to double check that the field is filled. Different elements could appear to confirm the action.
++-
+ - Use the available browser tools to interact with web pages
+ - Be specific and clear in your reasoning
+ - Complete the user's request step by step
+ - Call tools in logical sequence
+ - STOP iterating once your task is successfully completed - do NOT keep trying different approaches after success
+ 
++- In case of failure, reflect, provide reasoning, repeat.
++
++
+ Available tools: ${langchainTools.map(t => t.name).join(', ')}`;
+ 
+     // Create conversation with system message
+@@ -154,21 +158,17 @@ Available tools: ${langchainTools.map(t => t.name).join(', ')}`;
+       new HumanMessage(user_request)
+     ];
+ 
+-    console.log("🔄 [AI_AGENT] [ai_agent.js] Starting AI processing...");
+-    const maxIterations = 10;
++    const maxIterations = 32;
+     const toolResults = [];
+     
+     for (let iteration = 1; iteration <= maxIterations; iteration++) {
+-      console.log(`🔄 [AI_AGENT] [ai_agent.js] Iteration ${iteration}/${maxIterations}`);
+-      
++
+       try {
+         const result = await llmWithTools.invoke(messages);
+-        console.log(`🤖 [AI_AGENT] [ai_agent.js] AI Response (${iteration}):`, result);
++        console.log(`🤖 [AI_AGENT] AI Response ${iteration}/${maxIterations}::`, JSON.stringify(result));
+ 
+         // Check if AI wants to use tools
+         if (result.tool_calls && result.tool_calls.length > 0) {
+-          console.log(`🛠️ [AI_AGENT] [ai_agent.js] Processing ${result.tool_calls.length} tool call(s)`);
+-          
+           // Add AI message to conversation with properly formatted tool_calls
+           const formattedToolCalls = result.tool_calls.map(toolCall => ({
+             id: toolCall.id,
+@@ -182,12 +182,10 @@ Available tools: ${langchainTools.map(t => t.name).join(', ')}`;
+           
+           // Execute each tool call
+           for (const toolCall of result.tool_calls) {
+-            console.log(`🔧 [AI_AGENT] [ai_agent.js] Executing tool: ${toolCall.name}`);
+-            
+             // Find the tool by name
+             const tool = tools.find(t => t.name === toolCall.name);
+             if (!tool) {
+-              console.error(`❌ [AI_AGENT] [ai_agent.js] Tool not found: ${toolCall.name}`);
++              console.error(`❌ [AI_AGENT] Tool not found: ${toolCall.name}`);
+               const errorMsg = `Tool not found: ${toolCall.name}`;
+               messages.push(new ToolMessage(errorMsg, toolCall.id, toolCall.name));
+               continue;
+@@ -196,7 +194,8 @@ Available tools: ${langchainTools.map(t => t.name).join(', ')}`;
+             try {
+               // Execute the tool with the provided arguments
+               const toolResult = await tool.call(toolCall.args, tabId);
+-              console.log(`✅ [AI_AGENT] [ai_agent.js] Tool result for ${toolCall.name}:`, toolResult);
++              // Just log tool execution without the verbose result object
++              console.log(`✅ [AI_AGENT] Executed tool: ${toolCall.name}`);
+               
+               // Store tool result for reporting
+               toolResults.push({
+@@ -209,7 +208,7 @@ Available tools: ${langchainTools.map(t => t.name).join(', ')}`;
+               const resultString = typeof toolResult === 'string' ? toolResult : JSON.stringify(toolResult);
+               messages.push(new ToolMessage(resultString, toolCall.id, toolCall.name));
+             } catch (toolError) {
+-              console.error(`❌ [AI_AGENT] [ai_agent.js] Tool execution failed for ${toolCall.name}:`, toolError);
++              console.error(`❌ [AI_AGENT] Tool execution failed for ${toolCall.name}:`, toolError);
+               const errorMsg = `Tool execution failed: ${toolError.message}`;
+               toolResults.push({
+                 tool: toolCall.name,
+@@ -221,8 +220,8 @@ Available tools: ${langchainTools.map(t => t.name).join(', ')}`;
+           }
+         } else {
+           // No more tool calls - AI is done
+-          console.log(`✅ [AI_AGENT] [ai_agent.js] Processing complete after ${iteration} iterations`);
+-          console.log(`[ai_agent.js] Final response: ${result.content}`);
++          console.log(`✅ [AI_AGENT] Processing complete after ${iteration} iterations`);
++          console.log(`Final response: ${result.content}`);
+           return { 
+             output: result.content,
+             reasoning: result.content,
+@@ -231,13 +230,13 @@ Available tools: ${langchainTools.map(t => t.name).join(', ')}`;
+           };
+         }
+       } catch (error) {
+-        console.error(`❌ [AI_AGENT] [ai_agent.js] Error in iteration ${iteration}:`, error);
++        console.error(`❌ [AI_AGENT] Error in iteration ${iteration}:`, error);
+         throw error;
+       }
+     }
+     
+     // Max iterations reached
+-    console.log(`[ai_agent.js] Max iterations (${maxIterations}) reached`);
++    console.log(`Max iterations (${maxIterations}) reached`);
+     return { 
+       output: "Task incomplete - maximum iterations reached",
+       reasoning: "Maximum iterations reached without completion",
+diff --git a/chrome/browser/resources/vibe/ai_tools.extension.js b/chrome/browser/resources/vibe/ai_tools.extension.js
+index c31c1d65b1..a948fd7e35 100644
+--- a/chrome/browser/resources/vibe/ai_tools.extension.js
++++ b/chrome/browser/resources/vibe/ai_tools.extension.js
+@@ -368,7 +368,7 @@ class FillFormFieldTool extends BrowserTool {
+   constructor() {
+     super(
+       "fill_form_field",
+-      "Fill a form field on the current page. After you fill something, analyze page again. Some drop down menus could appear and you have to click on available options.",
++      "Fill a form field on the current page. After you fill the input field, get the page content again. Some drop down menus could appear and you have to click on available options.",
+       z.object({
+         tabId: CommonToolArgs.tabId,
+         selector: CommonToolArgs.selector,
+@@ -639,7 +639,7 @@ class GetPageContentTool extends BrowserTool {
+         throw new Error(`Content script error: ${response.error}`);
+       }
+       
+-      console.log(`✅ Successfully extracted content from tab ${targetTabId}`);
++      // Content extraction logged in content.js
+       return response.content || response;
+       
+     } catch (error) {
+diff --git a/chrome/browser/resources/vibe/content.js b/chrome/browser/resources/vibe/content.js
+index 33024a62de..3f0755e128 100644
+--- a/chrome/browser/resources/vibe/content.js
++++ b/chrome/browser/resources/vibe/content.js
+@@ -367,7 +367,7 @@ function isElementVisible(element) {
+  * Handle element clicking
+  */
+ function handleElementClick(data) {
+-  console.log("👆 Clicking element:", data);
++  console.log("👆 Clicking element:", JSON.stringify(data));
+ 
+   const element = document.querySelector(data.selector);
+   if (element) {
+@@ -551,7 +551,8 @@ function handleGetPageContentWithExtractor() {
+     interactiveElements: interactiveResult.success ? interactiveResult.elements : []
+   };
+ 
+-  console.log(`✅ Enhanced page content extracted: ${combinedContent.length} chars, ${result.pageInfo.inputCount} controls`);
++  // Single consolidated log
++  console.log(`✅ Page content extracted: ${combinedContent.length} chars, ${result.pageInfo.inputCount} controls (${result.pageInfo.extractionMethod})`);
+   return result;
+ }
+ 
+@@ -601,7 +602,8 @@ function handleGetPageContentFallback() {
+     interactiveElements: inputElements
+   };
+ 
+-  console.log(`✅ Fallback page content extracted: ${combinedContent.length} chars, ${inputElements.length} controls`);
++  // Single consolidated log
++  console.log(`✅ Page content extracted: ${combinedContent.length} chars, ${inputElements.length} controls (${result.pageInfo.extractionMethod})`);
+   return result;
+ }
+ 
+diff --git a/chrome/browser/resources/vibe/lib/contentExtractor.js b/chrome/browser/resources/vibe/lib/contentExtractor.js
+index 32640bd7a5..a6cdeea26c 100644
+--- a/chrome/browser/resources/vibe/lib/contentExtractor.js
++++ b/chrome/browser/resources/vibe/lib/contentExtractor.js
+@@ -122,7 +122,7 @@ export function extractPageContentAsMarkdown() {
+       .replace(/\[\s*\]\(\s*\)/g, '') // Remove empty links
+       .trim();
+     
+-    console.log(`✅ Extracted ${cleanedMarkdown.length} characters of markdown content`);
++    // Reduced logging - content summary logged in content.js
+     
+     return {
+       success: true,
+@@ -152,7 +152,7 @@ export function extractPageContentAsMarkdown() {
+  */
+ export function extractInteractiveElements() {
+   try {
+-    console.log('🔄 Extracting interactive elements...');
++    // Extracting interactive elements silently
+     
+     const elements = [];
+     
+@@ -199,7 +199,7 @@ export function extractInteractiveElements() {
+       });
+     });
+     
+-    console.log(`✅ Found ${elements.length} interactive elements`);
++    // Element count logged in content.js
+     
+     return {
+       success: true,
+-- 
+2.50.0
+

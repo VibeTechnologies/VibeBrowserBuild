@@ -1,0 +1,327 @@
+From 53dd5c4f1d4ed9599728a9608ea1af944eea4e03 Mon Sep 17 00:00:00 2001
+From: Den <2119348+dzianisv@users.noreply.github.com>
+Date: Tue, 22 Jul 2025 12:44:05 +0300
+Subject: [PATCH 06/10] claude-4-opus recomendations
+
+---
+ chrome/browser/resources/vibe/ai_agent.js     | 60 +++++++++++++-
+ .../resources/vibe/ai_tools.extension.js      | 82 +++++++++++++++++--
+ chrome/browser/resources/vibe/content.js      | 80 ++++++++++++++++++
+ 3 files changed, 214 insertions(+), 8 deletions(-)
+
+diff --git a/chrome/browser/resources/vibe/ai_agent.js b/chrome/browser/resources/vibe/ai_agent.js
+index deb155962b..282f2c6f35 100644
+--- a/chrome/browser/resources/vibe/ai_agent.js
++++ b/chrome/browser/resources/vibe/ai_agent.js
+@@ -143,6 +143,22 @@ ${langchainTools.map(t => t.name).join(', ')}`;
+ 
+     const maxIterations = config.maxIterations || 32;
+     const toolResults = [];
++    let consecutiveFailures = 0;
++    
++    // Retry function with exponential backoff
++    const retryWithBackoff = async (fn, maxRetries = 3, baseDelay = 1000) => {
++      for (let i = 0; i < maxRetries; i++) {
++        try {
++          return await fn();
++        } catch (error) {
++          if (i === maxRetries - 1) throw error;
++          
++          const delay = baseDelay * Math.pow(2, i);
++          console.log(`🔄 [AI_AGENT] Retry ${i + 1}/${maxRetries} after ${delay}ms due to: ${error.message}`);
++          await new Promise(resolve => setTimeout(resolve, delay));
++        }
++      }
++    };
+     
+     for (let iteration = 1; iteration <= maxIterations; iteration++) {
+ 
+@@ -188,11 +204,37 @@ ${langchainTools.map(t => t.name).join(', ')}`;
+             }
+ 
+             try {
+-              // Execute the tool with the provided arguments
+-              const toolResult = await tool.call(toolCall.args, tabId);
++              // Execute the tool with retry logic for reliability
++              const toolResult = await retryWithBackoff(
++                () => tool.call(toolCall.args, tabId), 
++                config.retryAttempts || 3
++              );
+               // Just log tool execution without the verbose result object
+               console.log(`✅ [AI_AGENT] Executed tool: ${toolCall.name}`);
+               
++              // Special handling for reasoning tool to check task completion
++              if (toolCall.name === 'reasoning') {
++                try {
++                  const reasoningData = JSON.parse(toolResult);
++                  if (reasoningData.task_completed === true) {
++                    console.log(`🎯 [AI_AGENT] Task completed as indicated by reasoning tool after ${iteration} iterations`);
++                    return {
++                      output: reasoningData.thinking,
++                      reasoning: reasoningData.evaluation,
++                      toolResults,
++                      iterations: iteration,
++                      completed: true,
++                      confidence: reasoningData.confidence || 0.5,
++                      memory: reasoningData.memory || {},
++                      completed_steps: reasoningData.completed_steps || []
++                    };
++                  }
++                } catch (parseError) {
++                  // If reasoning result can't be parsed as JSON, continue normally
++                  console.log(`⚠️ [AI_AGENT] Could not parse reasoning result as JSON, continuing...`);
++                }
++              }
++              
+               // Store tool result for reporting
+               toolResults.push({
+                 tool: toolCall.name,
+@@ -203,8 +245,12 @@ ${langchainTools.map(t => t.name).join(', ')}`;
+               // Add tool message to conversation - ensure it's a string and include tool name
+               const resultString = typeof toolResult === 'string' ? toolResult : JSON.stringify(toolResult);
+               messages.push(new ToolMessage(resultString, toolCall.id, toolCall.name));
++              
++              consecutiveFailures = 0; // Reset on successful tool execution
+             } catch (toolError) {
+               console.error(`❌ [AI_AGENT] Tool execution failed for ${toolCall.name}:`, toolError);
++              consecutiveFailures++;
++              
+               const errorMsg = `Tool execution failed: ${toolError.message}`;
+               toolResults.push({
+                 tool: toolCall.name,
+@@ -212,6 +258,16 @@ ${langchainTools.map(t => t.name).join(', ')}`;
+                 result: { error: errorMsg }
+               });
+               messages.push(new ToolMessage(errorMsg, toolCall.id, toolCall.name));
++              
++              // Add context message after multiple failures
++              if (consecutiveFailures >= 3) {
++                console.log(`⚠️ [AI_AGENT] ${consecutiveFailures} consecutive failures detected`);
++                messages.push(new ToolMessage(
++                  `Multiple consecutive failures detected (${consecutiveFailures}). Consider alternative approach or explain limitations.`,
++                  `system_${Date.now()}`,
++                  'system_advisory'
++                ));
++              }
+             }
+           }
+         } else {
+diff --git a/chrome/browser/resources/vibe/ai_tools.extension.js b/chrome/browser/resources/vibe/ai_tools.extension.js
+index dd7ce50f5f..163ac8a936 100644
+--- a/chrome/browser/resources/vibe/ai_tools.extension.js
++++ b/chrome/browser/resources/vibe/ai_tools.extension.js
+@@ -75,7 +75,7 @@ class FinishTool extends BrowserTool {
+   }
+ }
+ 
+-// Reasoning tool for LLM to express thoughts
++// Reasoning tool for LLM to express thoughts and manage task state
+ class ReasoningTool extends BrowserTool {
+   constructor() {
+     super(
+@@ -85,14 +85,38 @@ class ReasoningTool extends BrowserTool {
+         thinking: z.string().describe("Your current thoughts and analysis"),
+         evaluation: z.string().describe("Evaluation of previous actions or current state"),
+         next_goal: z.string().describe("What you plan to do next"),
+-        memory: z.object({}).passthrough().optional().describe("Important information to remember")
++        memory: z.object({}).passthrough().optional().describe("Important information to remember"),
++        task_completed: z.boolean().optional().describe("Set to true when the user's task is fully completed"),
++        confidence: z.number().min(0).max(1).optional().describe("Confidence level in current approach (0-1)"),
++        completed_steps: z.array(z.string()).optional().describe("List of steps completed so far")
+       })
+     );
+   }
+   
+-  async call({ thinking, evaluation, next_goal, memory }) {
+-    // This tool doesn't perform any action, just captures reasoning
+-    return `Reasoning captured: ${thinking}. Next goal: ${next_goal}`;
++  async call({ thinking, evaluation, next_goal, memory, task_completed, confidence, completed_steps }) {
++    const response = {
++      thinking,
++      evaluation,
++      next_goal,
++      task_completed: task_completed || false,
++      confidence: confidence || 0.5,
++      timestamp: new Date().toISOString()
++    };
++    
++    if (memory) {
++      response.memory = memory;
++    }
++    
++    if (completed_steps) {
++      response.completed_steps = completed_steps;
++    }
++    
++    // Log task completion for debugging
++    if (task_completed) {
++      console.log(`🎯 [AI_AGENT] Task marked as completed by reasoning tool`);
++    }
++    
++    return JSON.stringify(response);
+   }
+ }
+ 
+@@ -852,6 +876,51 @@ class TypeAtCoordinatesTool extends BrowserTool {
+   }
+ }
+ 
++// Tool to wait for dynamic elements to appear
++class WaitForElementTool extends BrowserTool {
++  constructor() {
++    super(
++      "wait_for_element",
++      "Wait for an element to appear on the page (useful for dynamic content loading)",
++      z.object({
++        tabId: CommonToolArgs.tabId.optional().describe("Tab ID (optional - will use active tab if not specified)"),
++        selector: CommonToolArgs.selector,
++        timeout: z.number().min(1000).max(30000).default(5000).optional()
++          .describe("Maximum time to wait in milliseconds (1-30 seconds)")
++      })
++    );
++  }
++  
++  async call({ tabId, selector, timeout = 5000 }) {
++    try {
++      // Use provided tabId or get active tab
++      const targetTab = tabId ? { id: tabId } : await getCurrentActiveTab();
++      const targetTabId = targetTab.id;
++      
++      console.log(`⏳ Waiting for element ${selector} to appear on tab ${targetTabId} (timeout: ${timeout}ms)`);
++      
++      // Ensure content script is loaded
++      await ensureContentScript(targetTabId);
++      
++      // Send wait message to content script
++      const response = await chrome.tabs.sendMessage(targetTabId, {
++        type: 'WAIT_FOR_ELEMENT',
++        data: { selector, timeout }
++      });
++      
++      if (response && response.error) {
++        throw new Error(`Element wait failed: ${response.error}`);
++      }
++      
++      console.log(`✅ Element ${selector} appeared on page`);
++      return `Element ${selector} appeared on page within ${timeout}ms timeout`;
++    } catch (error) {
++      console.error('[AI_AGENT] WaitForElementTool error:', error);
++      throw new Error(`Wait for element failed: ${error.message}`);
++    }
++  }
++}
++
+ export const browserTools = [
+   new FinishTool(),
+   new ReasoningTool(),
+@@ -867,7 +936,8 @@ export const browserTools = [
+   new AskUserQuestionTool(),
+   new TakeScreenshotTool(),
+   new ClickAtCoordinatesTool(),
+-  new TypeAtCoordinatesTool()
++  new TypeAtCoordinatesTool(),
++  new WaitForElementTool()
+ ];
+ 
+ 
+diff --git a/chrome/browser/resources/vibe/content.js b/chrome/browser/resources/vibe/content.js
+index e4a57967a5..7eb6fb0a07 100644
+--- a/chrome/browser/resources/vibe/content.js
++++ b/chrome/browser/resources/vibe/content.js
+@@ -137,6 +137,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+           .catch(error => sendResponse({ success: false, error: String(error) }));
+         break;
+ 
++      case "WAIT_FOR_ELEMENT":
++        Promise.resolve(handleWaitForElement(message.data))
++          .then(result => sendResponse({ success: true, action: "element_appeared", result }))
++          .catch(error => sendResponse({ success: false, error: String(error) }));
++        break;
++
+       default:
+         console.log("🤷 Unknown message type:", message.type);
+         sendResponse({ success: false, error: "Unknown message type" });
+@@ -1014,6 +1020,80 @@ function handleTypeAtCoordinates(data) {
+   }
+ }
+ 
++/**
++ * Handle waiting for an element to appear on the page
++ */
++function handleWaitForElement(data) {
++  return new Promise((resolve, reject) => {
++    try {
++      const { selector, timeout = 5000 } = data;
++      
++      console.log(`⏳ Waiting for element ${selector} to appear (timeout: ${timeout}ms)`);
++      
++      const startTime = Date.now();
++      let timeoutId;
++      
++      // Check if element already exists
++      const existingElement = document.querySelector(selector);
++      if (existingElement) {
++        console.log(`✅ Element ${selector} already exists on page`);
++        resolve({
++          success: true,
++          selector,
++          found: true,
++          waitTime: 0
++        });
++        return;
++      }
++      
++      // Set up MutationObserver to watch for element appearance
++      const observer = new MutationObserver((mutations) => {
++        const element = document.querySelector(selector);
++        if (element) {
++          const waitTime = Date.now() - startTime;
++          console.log(`✅ Element ${selector} appeared after ${waitTime}ms`);
++          
++          clearTimeout(timeoutId);
++          observer.disconnect();
++          
++          resolve({
++            success: true,
++            selector,
++            found: true,
++            waitTime,
++            element: {
++              tagName: element.tagName,
++              id: element.id || null,
++              className: element.className || null,
++              textContent: element.textContent?.substring(0, 100) || null
++            }
++          });
++        }
++      });
++      
++      // Start observing DOM changes
++      observer.observe(document.body, {
++        childList: true,
++        subtree: true,
++        attributes: true
++      });
++      
++      // Set timeout
++      timeoutId = setTimeout(() => {
++        observer.disconnect();
++        const waitTime = Date.now() - startTime;
++        console.log(`❌ Element ${selector} did not appear within ${timeout}ms`);
++        
++        reject(new Error(`Element ${selector} did not appear within ${timeout}ms timeout`));
++      }, timeout);
++      
++    } catch (error) {
++      console.log(`❌ Error waiting for element: ${error.message}`);
++      reject(error);
++    }
++  });
++}
++
+ // Initialize when DOM is ready
+ if (document.readyState === "loading") {
+   document.addEventListener("DOMContentLoaded", init);
+-- 
+2.50.0
+

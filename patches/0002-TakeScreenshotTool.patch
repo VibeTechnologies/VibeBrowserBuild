@@ -1,0 +1,815 @@
+From a7507d28bd36b42f6a34e9eb121818ca1cc3cb10 Mon Sep 17 00:00:00 2001
+From: Den <2119348+dzianisv@users.noreply.github.com>
+Date: Tue, 22 Jul 2025 11:47:02 +0300
+Subject: [PATCH 02/10] TakeScreenshotTool  class as requested. Here's what
+ I've created:
+
+Implementation Summary
+The
+TakeScreenshotTool
+ class extends BrowserTool and provides a fallback mechanism when DOM extraction fails. Here are the key features:
+
+Key Features:
+Chrome Extension API Integration: Uses chrome.tabs.captureVisibleTab() to capture screenshots
+Flexible Tab Targeting: Can target a specific tab ID or automatically use the active tab
+Format Options: Supports both PNG (default) and JPEG formats
+Graceful Error Handling: Returns error information instead of throwing exceptions to allow fallback behavior
+Rich Metadata: Returns comprehensive information including timestamp, URL, format, and success status
+Tool Parameters:
+tabId (optional): Target tab ID - defaults to active tab if not specified
+format (optional): Image format ("png" or "jpeg") - defaults to "png"
+---
+ .../resources/vibe/ai_tools.extension.js      | 713 ++++++++++--------
+ chrome/browser/resources/vibe/jest.config.js  |  14 +-
+ 2 files changed, 396 insertions(+), 331 deletions(-)
+
+diff --git a/chrome/browser/resources/vibe/ai_tools.extension.js b/chrome/browser/resources/vibe/ai_tools.extension.js
+index 208e5bdb53..c31c1d65b1 100644
+--- a/chrome/browser/resources/vibe/ai_tools.extension.js
++++ b/chrome/browser/resources/vibe/ai_tools.extension.js
+@@ -295,364 +295,431 @@ class CreateNewTabTool extends BrowserTool {
+   }
+ }
+ 
+-export const browserTools = [
+-  new ReasoningTool(),
+-  new GetActiveTabTool(),
+-  new CreateNewTabTool(),
+-  new GetDomStructureTool(),
+-  
+-  new class NavigateToURLTool extends BrowserTool {
+-    constructor() {
+-      super(
+-        "navigate_to_url",
+-        "Navigate the browser to a specific URL",
+-        z.object({
+-          tabId: CommonToolArgs.tabId,
+-          url: CommonToolArgs.url,
+-        })
+-      );
+-    }
+-    async call({ tabId, url }) {
+-      try {
+-        // First validate that the tab exists
+-        await chrome.tabs.get(tabId);
+-        
+-        // Navigate to the URL
+-        await chrome.tabs.update(tabId, { url });
+-        return `Successfully navigated to ${url}`;
+-      } catch (error) {
+-        if (error.message?.includes('No tab with id')) {
+-          // Tab doesn't exist, try to get the current active tab
+-          try {
+-            const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+-            if (activeTab) {
+-              await chrome.tabs.update(activeTab.id, { url });
+-              return `Successfully navigated to ${url} using active tab (${activeTab.id})`;
+-            }
+-          } catch (fallbackError) {
+-            throw new Error(`Navigation failed: No valid tab found. Original error: ${error.message}`);
++// not used
++class ExtractReadableContentTool extends BrowserTool {
++  constructor() {
++    super(
++      "extract_readable_content",
++      "Extract the main readable content (article) from the current web page.",
++      z.object({
++        tabId: CommonToolArgs.tabId
++      })
++    );
++  }
++  async call({ tabId }) {
++    // Inject and execute extractReadableContent in the page context
++    const [{ result, error }] = await chrome.scripting.executeScript({
++      target: { tabId },
++      func: () => {
++        try {
++          if (typeof extractReadableContent !== 'function') {
++            throw new Error('extractReadableContent is not defined on the page.');
+           }
++          return { result: extractReadableContent() };
++        } catch (e) {
++          return { error: e.message || String(e) };
+         }
+-        throw new Error(`Navigation failed: ${error.message}`);
+-      }
+-    }
+-  }(),
++      },
++    });
++    if (error) throw new Error('Content extraction failed: ' + error);
++    if (!result) throw new Error('No readable content found.');
++    return result;
++  }
++}
+ 
+-  new class FillFormFieldTool extends BrowserTool {
+-    constructor() {
+-      super(
+-        "fill_form_field",
+-        "Fill a form field on the current page. After you fill something, analyze page again. Some drop down menus could appear and you have to click on available options.",
+-        z.object({
+-          tabId: CommonToolArgs.tabId,
+-          selector: CommonToolArgs.selector,
+-          value: CommonToolArgs.value,
+-        })
+-      );
+-    }
+-    async call({ tabId, selector, value }) {
+-      try {
+-        // Use enhanced tab detection and content script management
+-        const targetTab = tabId ? { id: tabId } : await getCurrentActiveTab();
+-        const targetTabId = targetTab.id;
+-        
+-        console.log(`📝 Filling form field on tab ${targetTabId}: ${selector} = "${value}"`);
+-        
+-        // Ensure content script is loaded
+-        await ensureContentScript(targetTabId);
+-        
+-        // Send fill form message
+-        const response = await chrome.tabs.sendMessage(targetTabId, { 
+-          type: "fillForm", 
+-          data: { selector, value } 
+-        });
+-        
+-        if (response && response.error) {
+-          throw new Error(`Content script error: ${response.error}`);
++class NavigateToURLTool extends BrowserTool {
++  constructor() {
++    super(
++      "navigate_to_url",
++      "Navigate the browser to a specific URL",
++      z.object({
++        tabId: CommonToolArgs.tabId,
++        url: CommonToolArgs.url,
++      })
++    );
++  }
++  async call({ tabId, url }) {
++    try {
++      // First validate that the tab exists
++      await chrome.tabs.get(tabId);
++      
++      // Navigate to the URL
++      await chrome.tabs.update(tabId, { url });
++      return `Successfully navigated to ${url}`;
++    } catch (error) {
++      if (error.message?.includes('No tab with id')) {
++        // Tab doesn't exist, try to get the current active tab
++        try {
++          const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
++          if (activeTab) {
++            await chrome.tabs.update(activeTab.id, { url });
++            return `Successfully navigated to ${url} using active tab (${activeTab.id})`;
++          }
++        } catch (fallbackError) {
++          throw new Error(`Navigation failed: No valid tab found. Original error: ${error.message}`);
+         }
+-        
+-        console.log(`✅ Successfully filled field ${selector}`);
+-        return `Filled field ${selector} with "${value}"`;
+-      } catch (error) {
+-        console.error('❌ FillFormFieldTool error:', error);
+-        const errorMsg = error.message.includes('Could not establish connection') 
+-          ? 'Content script not available - page may need to be refreshed'
+-          : error.message;
+-        throw new Error(`Fill form failed: ${errorMsg}`);
+       }
++      throw new Error(`Navigation failed: ${error.message}`);
+     }
+-  }(),
++  }
++}
+ 
+-  new class ClickElementTool extends BrowserTool {
+-    constructor() {
+-      super(
+-        "click_element",
+-        "Click an interactive element on the current page by its selector",
+-        z.object({
+-          tabId: CommonToolArgs.tabId.optional().describe("Tab ID (optional - will use active tab if not specified)"),
+-          selector: CommonToolArgs.selector,
+-        })
+-      );
+-    }
+-    async call({ tabId, selector }) {
+-      try {
+-        // Use enhanced tab detection and content script management
+-        const targetTab = tabId ? { id: tabId } : await getCurrentActiveTab();
+-        const targetTabId = targetTab.id;
+-        
+-        console.log(`🖘 Clicking element on tab ${targetTabId}: ${selector}`);
+-        
+-        // Ensure content script is loaded
+-        await ensureContentScript(targetTabId);
+-        
+-        // Send click message
+-        const response = await chrome.tabs.sendMessage(targetTabId, { 
+-          type: "clickElement", 
+-          data: { selector } 
+-        });
+-        
+-        if (response && response.error) {
+-          throw new Error(`Content script error: ${response.error}`);
+-        }
+-        
+-        console.log(`✅ Successfully clicked element ${selector}`);
+-        return `Clicked element: ${selector}`;
+-      } catch (error) {
+-        console.error('❌ ClickElementTool error:', error);
+-        const errorMsg = error.message.includes('Could not establish connection') 
+-          ? 'Content script not available - page may need to be refreshed'
+-          : error.message;
+-        throw new Error(`Click failed: ${errorMsg}`);
++class FillFormFieldTool extends BrowserTool {
++  constructor() {
++    super(
++      "fill_form_field",
++      "Fill a form field on the current page. After you fill something, analyze page again. Some drop down menus could appear and you have to click on available options.",
++      z.object({
++        tabId: CommonToolArgs.tabId,
++        selector: CommonToolArgs.selector,
++        value: CommonToolArgs.value,
++      })
++    );
++  }
++  async call({ tabId, selector, value }) {
++    try {
++      // Use enhanced tab detection and content script management
++      const targetTab = tabId ? { id: tabId } : await getCurrentActiveTab();
++      const targetTabId = targetTab.id;
++      
++      console.log(`📝 Filling form field on tab ${targetTabId}: ${selector} = "${value}"`);
++      
++      // Ensure content script is loaded
++      await ensureContentScript(targetTabId);
++      
++      // Send fill form message
++      const response = await chrome.tabs.sendMessage(targetTabId, { 
++        type: "fillForm", 
++        data: { selector, value } 
++      });
++      
++      if (response && response.error) {
++        throw new Error(`Content script error: ${response.error}`);
+       }
++      
++      console.log(`✅ Successfully filled field ${selector}`);
++      return `Filled field ${selector} with "${value}"`;
++    } catch (error) {
++      console.error('❌ FillFormFieldTool error:', error);
++      const errorMsg = error.message.includes('Could not establish connection') 
++        ? 'Content script not available - page may need to be refreshed'
++        : error.message;
++      throw new Error(`Fill form failed: ${errorMsg}`);
+     }
+-  }(),
++  }
++}
+ 
+-  new class ExtractReadableContentTool extends BrowserTool {
+-    constructor() {
+-      super(
+-        "extract_readable_content",
+-        "Extract the main readable content (article) from the current web page.",
+-        z.object({
+-          tabId: CommonToolArgs.tabId
+-        })
+-      );
+-    }
+-    async call({ tabId }) {
+-      // Inject and execute extractReadableContent in the page context
+-      const [{ result, error }] = await chrome.scripting.executeScript({
+-        target: { tabId },
+-        func: () => {
+-          try {
+-            if (typeof extractReadableContent !== 'function') {
+-              throw new Error('extractReadableContent is not defined on the page.');
+-            }
+-            return { result: extractReadableContent() };
+-          } catch (e) {
+-            return { error: e.message || String(e) };
+-          }
+-        },
++class ClickElementTool extends BrowserTool {
++  constructor() {
++    super(
++      "click_element",
++      "Click an interactive element on the current page by its selector",
++      z.object({
++        tabId: CommonToolArgs.tabId.optional().describe("Tab ID (optional - will use active tab if not specified)"),
++        selector: CommonToolArgs.selector,
++      })
++    );
++  }
++  async call({ tabId, selector }) {
++    try {
++      // Use enhanced tab detection and content script management
++      const targetTab = tabId ? { id: tabId } : await getCurrentActiveTab();
++      const targetTabId = targetTab.id;
++      
++      console.log(`🖘 Clicking element on tab ${targetTabId}: ${selector}`);
++      
++      // Ensure content script is loaded
++      await ensureContentScript(targetTabId);
++      
++      // Send click message
++      const response = await chrome.tabs.sendMessage(targetTabId, { 
++        type: "clickElement", 
++        data: { selector } 
+       });
+-      if (error) throw new Error('Content extraction failed: ' + error);
+-      if (!result) throw new Error('No readable content found.');
+-      return result;
++      
++      if (response && response.error) {
++        throw new Error(`Content script error: ${response.error}`);
++      }
++      
++      console.log(`✅ Successfully clicked element ${selector}`);
++      return `Clicked element: ${selector}`;
++    } catch (error) {
++      console.error('❌ ClickElementTool error:', error);
++      const errorMsg = error.message.includes('Could not establish connection') 
++        ? 'Content script not available - page may need to be refreshed'
++        : error.message;
++      throw new Error(`Click failed: ${errorMsg}`);
+     }
+-  }(),
++  }
++}
+ 
+-  new class ScrollTool extends BrowserTool {
+-    constructor() {
+-      super(
+-        "scroll_page",
+-        "Scroll the page up or down by a number of pages",
+-        z.object({
+-          tabId: CommonToolArgs.tabId,
+-          direction: z.enum(["up", "down"]),
+-          numPages: z.number().min(0),
+-        })
+-      );
+-    }
+-    async call({ tabId, direction, numPages }) {
+-      try {
+-        // Validate tab exists
+-        await chrome.tabs.get(tabId);
+-        await chrome.tabs.sendMessage(tabId, { type: "scrollPage", data: { direction, numPages } });
+-        return `Scrolled page ${direction} by ${numPages} pages`;
+-      } catch (error) {
+-        if (error.message?.includes('No tab with id')) {
+-          const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+-          if (activeTab) {
+-            await chrome.tabs.sendMessage(activeTab.id, { type: "scrollPage", data: { direction, numPages } });
+-            return `Scrolled page ${direction} by ${numPages} pages using active tab (${activeTab.id})`;
+-          }
++class ScrollTool extends BrowserTool {
++  constructor() {
++    super(
++      "scroll_page",
++      "Scroll the page up or down by a number of pages",
++      z.object({
++        tabId: CommonToolArgs.tabId,
++        direction: z.enum(["up", "down"]),
++        numPages: z.number().min(0),
++      })
++    );
++  }
++  async call({ tabId, direction, numPages }) {
++    try {
++      // Validate tab exists
++      await chrome.tabs.get(tabId);
++      await chrome.tabs.sendMessage(tabId, { type: "scrollPage", data: { direction, numPages } });
++      return `Scrolled page ${direction} by ${numPages} pages`;
++    } catch (error) {
++      if (error.message?.includes('No tab with id')) {
++        const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
++        if (activeTab) {
++          await chrome.tabs.sendMessage(activeTab.id, { type: "scrollPage", data: { direction, numPages } });
++          return `Scrolled page ${direction} by ${numPages} pages using active tab (${activeTab.id})`;
+         }
+-        throw new Error(`Scroll page failed: ${error.message}`);
+       }
++      throw new Error(`Scroll page failed: ${error.message}`);
+     }
+-  }(),
++  }
++}
+ 
+-  new class UpdateSuggestionsTool extends BrowserTool {
+-    constructor() {
+-      super(
+-        "update_suggestions",
+-        "Update the sidepanel suggestions with new actions for the user to take",
+-        z.object({
+-          suggestions: z.array(z.union([
+-            z.string(),
+-            z.object({
+-              text: z.string().describe("Display text for the suggestion"),
+-              command: z.string().describe("Command to execute when clicked")
+-            })
+-          ])).describe("Array of suggestions to show to the user")
+-        })
+-      );
+-    }
+-    async call({ suggestions }) {
+-      try {
+-        console.log("💡 [UPDATE_SUGGESTIONS] [ai_tools.extension.js] Updating suggestions:", suggestions);
+-        
+-        // Send message to background script to update sidepanel
+-        await chrome.runtime.sendMessage({
+-          type: "updateSuggestions",
+-          suggestions: suggestions,
+-          source: "ai_agent"
+-        });
+-        
+-        return `Updated suggestions with ${suggestions.length} items: ${suggestions.map(s => typeof s === 'string' ? s : s.text || s.command).join(', ')}`;
+-      } catch (error) {
+-        throw new Error(`Update suggestions failed: ${error.message}`);
+-      }
++class UpdateSuggestionsTool extends BrowserTool {
++  constructor() {
++    super(
++      "update_suggestions",
++      "Update the sidepanel suggestions with new actions for the user to take",
++      z.object({
++        suggestions: z.array(z.union([
++          z.string(),
++          z.object({
++            text: z.string().describe("Display text for the suggestion"),
++            command: z.string().describe("Command to execute when clicked")
++          })
++        ])).describe("Array of suggestions to show to the user")
++      })
++    );
++  }
++  async call({ suggestions }) {
++    try {
++      console.log("💡 [UPDATE_SUGGESTIONS] [ai_tools.extension.js] Updating suggestions:", suggestions);
++      
++      // Send message to background script to update sidepanel
++      await chrome.runtime.sendMessage({
++        type: "updateSuggestions",
++        suggestions: suggestions,
++        source: "ai_agent"
++      });
++      
++      return `Updated suggestions with ${suggestions.length} items: ${suggestions.map(s => typeof s === 'string' ? s : s.text || s.command).join(', ')}`;
++    } catch (error) {
++      throw new Error(`Update suggestions failed: ${error.message}`);
+     }
+-  }(),
++  }
++}
+ 
+-  // Tool to ask user questions and wait for responses
+-  new class AskUserQuestionTool extends BrowserTool {
+-    constructor() {
+-      super(
+-        "ask_user_question",
+-        "Ask the user a question and wait for their response. Use this when you need clarification or additional information from the user.",
+-        z.object({
+-          question: z.string().describe("The question to ask the user"),
+-          context: z.string().optional().describe("Optional context or background information for the question")
+-        })
+-      );
+-    }
++// Tool to ask user questions and wait for responses
++class AskUserQuestionTool extends BrowserTool {
++  constructor() {
++    super(
++      "ask_user_question",
++      "Ask the user a question and wait for their response. Use this when you need clarification or additional information from the user.",
++      z.object({
++        question: z.string().describe("The question to ask the user"),
++        context: z.string().optional().describe("Optional context or background information for the question")
++      })
++    );
++  }
+ 
+-    async call({ question, context }) {
+-      try {
+-        console.log('[AI_AGENT] Asking user question:', question);
++  async call({ question, context }) {
++    try {
++      console.log('[AI_AGENT] Asking user question:', question);
++      
++      // Create a unique request ID for this question
++      const requestId = `question_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
++      
++      // Prepare the message to send to the sidepanel
++      const questionMessage = {
++        type: 'USER_QUESTION',
++        requestId: requestId,
++        question: question,
++        context: context || null,
++        timestamp: Date.now()
++      };
++      
++      // Send the question to the sidepanel via runtime messaging
++      return new Promise((resolve, reject) => {
++        // Set up a listener for the response
++        const responseListener = (message, sender, sendResponse) => {
++          if (message.type === 'USER_QUESTION_RESPONSE' && message.requestId === requestId) {
++            // Remove the listener once we get our response
++            chrome.runtime.onMessage.removeListener(responseListener);
++            
++            console.log('[AI_AGENT] Received user response:', message.response);
++            resolve(`User responded: "${message.response}"`);
++          }
++        };
++        
++        // Add the response listener
++        chrome.runtime.onMessage.addListener(responseListener);
+         
+-        // Create a unique request ID for this question
+-        const requestId = `question_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
++        // Set a timeout in case the user doesn't respond
++        const timeout = setTimeout(() => {
++          chrome.runtime.onMessage.removeListener(responseListener);
++          reject(new Error('User question timed out after 5 minutes'));
++        }, 300000); // 5 minutes timeout
+         
+-        // Prepare the message to send to the sidepanel
+-        const questionMessage = {
+-          type: 'USER_QUESTION',
+-          requestId: requestId,
+-          question: question,
+-          context: context || null,
+-          timestamp: Date.now()
++        // Clear timeout when we get a response
++        const originalResolve = resolve;
++        resolve = (value) => {
++          clearTimeout(timeout);
++          originalResolve(value);
+         };
+         
+-        // Send the question to the sidepanel via runtime messaging
+-        return new Promise((resolve, reject) => {
+-          // Set up a listener for the response
+-          const responseListener = (message, sender, sendResponse) => {
+-            if (message.type === 'USER_QUESTION_RESPONSE' && message.requestId === requestId) {
+-              // Remove the listener once we get our response
+-              chrome.runtime.onMessage.removeListener(responseListener);
+-              
+-              console.log('[AI_AGENT] Received user response:', message.response);
+-              resolve(`User responded: "${message.response}"`);
+-            }
+-          };
+-          
+-          // Add the response listener
+-          chrome.runtime.onMessage.addListener(responseListener);
+-          
+-          // Set a timeout in case the user doesn't respond
+-          const timeout = setTimeout(() => {
++        // Send the question to the sidepanel
++        chrome.runtime.sendMessage(questionMessage, (response) => {
++          if (chrome.runtime.lastError) {
++            clearTimeout(timeout);
+             chrome.runtime.onMessage.removeListener(responseListener);
+-            reject(new Error('User question timed out after 5 minutes'));
+-          }, 300000); // 5 minutes timeout
++            reject(new Error(`Failed to send question to sidepanel: ${chrome.runtime.lastError.message}`));
++            return;
++          }
+           
+-          // Clear timeout when we get a response
+-          const originalResolve = resolve;
+-          resolve = (value) => {
++          if (!response || !response.success) {
+             clearTimeout(timeout);
+-            originalResolve(value);
+-          };
++            chrome.runtime.onMessage.removeListener(responseListener);
++            reject(new Error('Sidepanel did not acknowledge the question'));
++            return;
++          }
+           
+-          // Send the question to the sidepanel
+-          chrome.runtime.sendMessage(questionMessage, (response) => {
+-            if (chrome.runtime.lastError) {
+-              clearTimeout(timeout);
+-              chrome.runtime.onMessage.removeListener(responseListener);
+-              reject(new Error(`Failed to send question to sidepanel: ${chrome.runtime.lastError.message}`));
+-              return;
+-            }
+-            
+-            if (!response || !response.success) {
+-              clearTimeout(timeout);
+-              chrome.runtime.onMessage.removeListener(responseListener);
+-              reject(new Error('Sidepanel did not acknowledge the question'));
+-              return;
+-            }
+-            
+-            console.log('[AI_AGENT] Question sent to sidepanel, waiting for user response...');
+-          });
++          console.log('[AI_AGENT] Question sent to sidepanel, waiting for user response...');
+         });
+-        
+-      } catch (error) {
+-        console.error('[AI_AGENT] AskUserQuestionTool error:', error);
+-        throw new Error(`Ask user question failed: ${error.message}`);
+-      }
++      });
++      
++    } catch (error) {
++      console.error('[AI_AGENT] AskUserQuestionTool error:', error);
++      throw new Error(`Ask user question failed: ${error.message}`);
+     }
+-  }(),
++  }
++}
++
++// Get page content tool - extracts clean text and input fields
++class GetPageContentTool extends BrowserTool {
++  constructor() {
++    super(
++      "get_page_content",
++      "Get clean page content with text and input fields for AI analysis",
++      z.object({
++        tabId: CommonToolArgs.tabId.optional().describe("Tab ID (optional - will use active tab if not specified)")
++      })
++    );
++  }
+ 
+-  // Get page content tool - extracts clean text and input fields
+-  new class GetPageContentTool extends BrowserTool {
+-    constructor() {
+-      super(
+-        "get_page_content",
+-        "Get clean page content with text and input fields for AI analysis",
+-        z.object({
+-          tabId: CommonToolArgs.tabId.optional().describe("Tab ID (optional - will use active tab if not specified)")
+-        })
+-      );
++  async call({ tabId }) {
++    try {
++      // Use provided tabId or get active tab
++      const targetTab = tabId ? { id: tabId } : await getCurrentActiveTab();
++      const targetTabId = targetTab.id;
++      
++      console.log(`🔍 Getting page content from tab ${targetTabId} (${targetTab.url || 'unknown URL'})`);
++      
++      // Ensure content script is loaded
++      await ensureContentScript(targetTabId);
++      
++      // Send message to content script to get page content
++      const response = await chrome.tabs.sendMessage(targetTabId, {
++        type: 'GET_PAGE_CONTENT'
++      });
++      
++      if (!response) {
++        throw new Error('No response from content script');
++      }
++      
++      if (response.error) {
++        throw new Error(`Content script error: ${response.error}`);
++      }
++      
++      console.log(`✅ Successfully extracted content from tab ${targetTabId}`);
++      return response.content || response;
++      
++    } catch (error) {
++      console.error('[AI_AGENT] GetPageContentTool error:', error);
++      throw new Error(`Get page content failed: ${error.message}`);
+     }
++  }
++}
+ 
+-    async call({ tabId }) {
+-      try {
+-        // Use provided tabId or get active tab
+-        const targetTab = tabId ? { id: tabId } : await getCurrentActiveTab();
+-        const targetTabId = targetTab.id;
+-        
+-        console.log(`🔍 Getting page content from tab ${targetTabId} (${targetTab.url || 'unknown URL'})`);
+-        
+-        // Ensure content script is loaded
+-        await ensureContentScript(targetTabId);
+-        
+-        // Send message to content script to get page content
+-        const response = await chrome.tabs.sendMessage(targetTabId, {
+-          type: 'GET_PAGE_CONTENT'
+-        });
+-        
+-        if (!response) {
+-          throw new Error('No response from content script');
+-        }
+-        
+-        if (response.error) {
+-          throw new Error(`Content script error: ${response.error}`);
+-        }
+-        
+-        console.log(`✅ Successfully extracted content from tab ${targetTabId}`);
+-        return response.content || response;
+-        
+-      } catch (error) {
+-        console.error('[AI_AGENT] GetPageContentTool error:', error);
+-        throw new Error(`Get page content failed: ${error.message}`);
++// Tool to take a screenshot of the current page as a fallback mechanism
++class TakeScreenshotTool extends BrowserTool {
++  constructor() {
++    super(
++      "take_screenshot",
++      "Take a screenshot of the current page as a fallback when get_page_content and get_dom_structure tools fail",
++      z.object({
++        tabId: CommonToolArgs.tabId.optional().describe("Tab ID (optional - will use active tab if not specified)"),
++        format: z.enum(["png", "jpeg"]).default("png").optional().describe("Image format for the screenshot")
++      })
++    );
++  }
++
++  async call({ tabId, format = "png" }) {
++    try {
++      // Use provided tabId or get active tab
++      const targetTab = tabId ? { id: tabId } : await getCurrentActiveTab();
++      const targetTabId = targetTab.id;
++      
++      console.log(`📸 Taking screenshot of tab ${targetTabId} (${targetTab.url || 'unknown URL'})`);
++      
++      // Capture the visible tab using Chrome Extension API
++      const dataUrl = await chrome.tabs.captureVisibleTab(targetTab.windowId, {
++        format: format,
++        quality: format === "jpeg" ? 90 : undefined
++      });
++      
++      if (!dataUrl) {
++        throw new Error('Failed to capture screenshot - no data returned');
+       }
++      
++      console.log(`✅ Successfully captured screenshot of tab ${targetTabId}`);
++      
++      // Return screenshot data with metadata
++      return {
++        success: true,
++        screenshot: dataUrl,
++        format: format,
++        tabId: targetTabId,
++        url: targetTab.url,
++        timestamp: new Date().toISOString(),
++        message: `Screenshot captured successfully in ${format.toUpperCase()} format`
++      };
++      
++    } catch (error) {
++      console.error('[AI_AGENT] TakeScreenshotTool error:', error);
++      
++      // Return error information instead of throwing to allow graceful fallback
++      return {
++        success: false,
++        error: error.message,
++        message: `Screenshot capture failed: ${error.message}`,
++        fallback_suggestion: "Consider using get_page_content or get_dom_structure as alternative methods"
++      };
+     }
+-  }()
++  }
++}
++
++export const browserTools = [
++  new ReasoningTool(),
++  new GetActiveTabTool(),
++  new CreateNewTabTool(),
++  new GetPageContentTool(),
++  new GetDomStructureTool(),
++  new NavigateToURLTool(),
++  new FillFormFieldTool(),
++  new ClickElementTool(),
++  new ScrollTool(),
++  new UpdateSuggestionsTool(),
++  new AskUserQuestionTool(),
++  new TakeScreenshotTool()
+ ];
+ 
+ 
+diff --git a/chrome/browser/resources/vibe/jest.config.js b/chrome/browser/resources/vibe/jest.config.js
+index 3724dec008..f1b5c3ad8f 100644
+--- a/chrome/browser/resources/vibe/jest.config.js
++++ b/chrome/browser/resources/vibe/jest.config.js
+@@ -1,16 +1,14 @@
+ // jest.config.js
+ export default {
+-  testEnvironment: 'node',
+-  testMatch: ['**/*.test.*.js', '**/*.test.real.js'],
++  testEnvironment: 'jsdom',
++  testMatch: ['**/*.test.js', '**/*.test.real.js'],
+   testTimeout: 60000,
+   verbose: true,
+-  extensionsToTreatAsEsm: ['.js'],
+-  globals: {
+-    'ts-jest': {
+-      useESM: true
+-    }
++  transform: {
++    '^.+\.js$': 'babel-jest'
+   },
+   transformIgnorePatterns: [
+     'node_modules/(?!(langchain|@langchain)/)'
+-  ]
++  ],
++  setupFilesAfterEnv: ['<rootDir>/jest.setup.js']
+ };
+\ No newline at end of file
+-- 
+2.50.0
+

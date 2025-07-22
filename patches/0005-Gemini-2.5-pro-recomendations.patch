@@ -1,0 +1,586 @@
+From fe1d6e987981c5c5a88a26a2d22d687ffa7a90bb Mon Sep 17 00:00:00 2001
+From: Den <2119348+dzianisv@users.noreply.github.com>
+Date: Tue, 22 Jul 2025 12:40:27 +0300
+Subject: [PATCH 05/10] Gemini-2.5-pro recomendations
+
+---
+ chrome/browser/resources/vibe/ai_agent.js     |  74 +++----
+ .../resources/vibe/ai_tools.extension.js      | 190 ++++++++++++++--
+ chrome/browser/resources/vibe/content.js      | 204 ++++++++++++++++++
+ 3 files changed, 408 insertions(+), 60 deletions(-)
+
+diff --git a/chrome/browser/resources/vibe/ai_agent.js b/chrome/browser/resources/vibe/ai_agent.js
+index 6a8cce076b..deb155962b 100644
+--- a/chrome/browser/resources/vibe/ai_agent.js
++++ b/chrome/browser/resources/vibe/ai_agent.js
+@@ -113,44 +113,27 @@ export class VibeLangchainAgent {
+     // Bind tools to the model for function calling
+     const llmWithTools = llm.bind({ tools: langchainTools });
+ 
+-    // System prompt focused on function calling
+-    const systemPrompt = `You are an AI agent designed to automate browser tasks efficiently using function calls.
+-
+-Your capabilities:
+-1. Navigate websites and extract information
+-2. Automate form submissions and interactions
+-3. Gather and save information
+-4. Operate in an iterative loop with tools
+-
+-Website Routing Rules:
+-- For FLIGHT searches: Use flights.google.com
+-- For HOTEL/ACCOMMODATION searches: Use booking.com, airbnb.com, hotels.com, or agoda.com
+-- For SHOPPING searches: Use amazon.com, walmart.com, aliexpress.com, or temu.com
+-- Always navigate to the appropriate website based on the user's request type
+-
+-Guidelines:
+-- ALWAYS start by calling the 'reasoning' tool to express your thoughts
+-- The tab ID ${tabId} is provided for your current working context
+-- If you need a new tab for navigation, use the 'create_new_tab' tool first
+-- If navigation fails with tab ID errors, the tools will automatically fall back to the active tab
+-
+-CRITICAL WORKFLOW RULES:
+-- BEFORE filling any forms or clicking elements, ALWAYS use 'get_page_content' tool first to analyze the page
+-- The get_page_content tool shows you exactly what form fields and interactive elements are available
+-- Use the actual element selectors from get_page_content output - DO NOT guess selectors
+-- Only attempt form filling after you have confirmed the target elements exist on the page
+-- After calling the fill_form_field tool, get page content again to double check that the field is filled. Different elements could appear to confirm the action.
+--
+-- Use the available browser tools to interact with web pages
+-- Be specific and clear in your reasoning
+-- Complete the user's request step by step
+-- Call tools in logical sequence
+-- STOP iterating once your task is successfully completed - do NOT keep trying different approaches after success
+-
+-- In case of failure, reflect, provide reasoning, repeat.
+-
+-
+-Available tools: ${langchainTools.map(t => t.name).join(', ')}`;
++    // System prompt focused on function calling with continuous reasoning
++    const systemPrompt = `You are an AI agent that automates browser tasks using tools. You will be given a task and a starting tab ID: ${tabId}.
++
++## Core Workflow
++1. **Reason:** ALWAYS start with the \`reasoning\` tool to state your plan.
++2. **Act:** Use tools like \`get_page_content\`, \`navigate_to_url\`, \`fill_form_field\`, or \`click_element\`.
++3. **Analyze & Repeat:** Use \`reasoning\` again to analyze the result of your action and decide the next step.
++4. **Finish:** Once the task is fully complete, call the \`finish_task\` tool with the final answer.
++
++## Critical Rules
++- **NEVER guess selectors.** ALWAYS use \`get_page_content\` first to see available elements and their selectors before trying to click or fill anything.
++- **Verify your actions.** After filling a field or clicking a button, you can use \`get_page_content\` again to confirm the page has updated as you expected.
++- **Use specific websites for common tasks:**
++  - **Flights:** flights.google.com
++  - **Hotels:** booking.com, airbnb.com
++  - **Shopping:** amazon.com, walmart.com
++- If you need a new context for a task, use the \`create_new_tab\` tool.
++- If you fail, use the \`reasoning\` tool to analyze the error and create a new plan.
++
++## Available Tools
++${langchainTools.map(t => t.name).join(', ')}`;
+ 
+     // Create conversation with system message
+     const messages = [
+@@ -158,7 +141,7 @@ Available tools: ${langchainTools.map(t => t.name).join(', ')}`;
+       new HumanMessage(user_request)
+     ];
+ 
+-    const maxIterations = 32;
++    const maxIterations = config.maxIterations || 32;
+     const toolResults = [];
+     
+     for (let iteration = 1; iteration <= maxIterations; iteration++) {
+@@ -169,6 +152,19 @@ Available tools: ${langchainTools.map(t => t.name).join(', ')}`;
+ 
+         // Check if AI wants to use tools
+         if (result.tool_calls && result.tool_calls.length > 0) {
++          // Check for the finish_task tool - signals successful completion
++          const finishCall = result.tool_calls.find(t => t.name === 'finish_task');
++          if (finishCall) {
++            console.log(`🏁 [AI_AGENT] Task finished by agent after ${iteration} iterations.`);
++            return {
++              output: finishCall.args.final_answer,
++              reasoning: finishCall.args.final_answer,
++              toolResults,
++              iterations: iteration,
++              confidence: finishCall.args.confidence || 'high'
++            };
++          }
++          
+           // Add AI message to conversation with properly formatted tool_calls
+           const formattedToolCalls = result.tool_calls.map(toolCall => ({
+             id: toolCall.id,
+diff --git a/chrome/browser/resources/vibe/ai_tools.extension.js b/chrome/browser/resources/vibe/ai_tools.extension.js
+index a948fd7e35..dd7ce50f5f 100644
+--- a/chrome/browser/resources/vibe/ai_tools.extension.js
++++ b/chrome/browser/resources/vibe/ai_tools.extension.js
+@@ -56,6 +56,25 @@ async function ensureContentScript(tabId) {
+   return true;
+ }
+ 
++// Tool to explicitly signal task completion
++class FinishTool extends BrowserTool {
++  constructor() {
++    super(
++      "finish_task",
++      "Call this tool with your final answer when you have successfully completed the user's request.",
++      z.object({
++        final_answer: z.string().describe("The final answer or a summary of the task's successful completion"),
++        confidence: z.enum(["high", "medium", "low"]).default("high").optional().describe("Your confidence level in task completion")
++      })
++    );
++  }
++  
++  async call({ final_answer, confidence = "high" }) {
++    console.log(`🏁 [AI_AGENT] Task completed with ${confidence} confidence: ${final_answer}`);
++    return `Task successfully completed with ${confidence} confidence: ${final_answer}`;
++  }
++}
++
+ // Reasoning tool for LLM to express thoughts
+ class ReasoningTool extends BrowserTool {
+   constructor() {
+@@ -331,29 +350,77 @@ class NavigateToURLTool extends BrowserTool {
+   constructor() {
+     super(
+       "navigate_to_url",
+-      "Navigate the browser to a specific URL",
++      "Navigate the browser to a specific URL and wait for the page to load",
+       z.object({
+         tabId: CommonToolArgs.tabId,
+         url: CommonToolArgs.url,
+       })
+     );
+   }
++  
++  // Helper function to wait for tab to complete loading
++  waitForTabComplete(tabId) {
++    return new Promise((resolve, reject) => {
++      let timeoutId;
++      
++      const listener = (changedTabId, changeInfo, tab) => {
++        if (changedTabId === tabId && changeInfo.status === 'complete') {
++          chrome.tabs.onUpdated.removeListener(listener);
++          clearTimeout(timeoutId);
++          resolve(tab);
++        }
++      };
++      
++      // Set up timeout (30 seconds)
++      timeoutId = setTimeout(() => {
++        chrome.tabs.onUpdated.removeListener(listener);
++        reject(new Error('Navigation timeout after 30 seconds'));
++      }, 30000);
++      
++      chrome.tabs.onUpdated.addListener(listener);
++      
++      // Also check if tab is already complete
++      chrome.tabs.get(tabId, (tab) => {
++        if (tab && tab.status === 'complete') {
++          chrome.tabs.onUpdated.removeListener(listener);
++          clearTimeout(timeoutId);
++          resolve(tab);
++        }
++      });
++    });
++  }
++  
+   async call({ tabId, url }) {
+     try {
+       // First validate that the tab exists
+       await chrome.tabs.get(tabId);
+       
++      console.log(`🧭 Navigating tab ${tabId} to ${url}`);
++      
+       // Navigate to the URL
+       await chrome.tabs.update(tabId, { url });
+-      return `Successfully navigated to ${url}`;
++      
++      // Wait for the page to complete loading
++      console.log(`⏳ Waiting for page to load...`);
++      const completedTab = await this.waitForTabComplete(tabId);
++      
++      console.log(`✅ Navigation completed successfully`);
++      return `Successfully navigated to ${url} and page finished loading`;
+     } catch (error) {
+       if (error.message?.includes('No tab with id')) {
+         // Tab doesn't exist, try to get the current active tab
+         try {
+           const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+           if (activeTab) {
++            console.log(`🧭 Navigating active tab ${activeTab.id} to ${url}`);
+             await chrome.tabs.update(activeTab.id, { url });
+-            return `Successfully navigated to ${url} using active tab (${activeTab.id})`;
++            
++            // Wait for the page to complete loading
++            console.log(`⏳ Waiting for page to load...`);
++            await this.waitForTabComplete(activeTab.id);
++            
++            console.log(`✅ Navigation completed successfully`);
++            return `Successfully navigated to ${url} using active tab (${activeTab.id}) and page finished loading`;
+           }
+         } catch (fallbackError) {
+           throw new Error(`Navigation failed: No valid tab found. Original error: ${error.message}`);
+@@ -682,32 +749,111 @@ class TakeScreenshotTool extends BrowserTool {
+       
+       console.log(`✅ Successfully captured screenshot of tab ${targetTabId}`);
+       
+-      // Return screenshot data with metadata
+-      return {
+-        success: true,
+-        screenshot: dataUrl,
+-        format: format,
+-        tabId: targetTabId,
+-        url: targetTab.url,
+-        timestamp: new Date().toISOString(),
+-        message: `Screenshot captured successfully in ${format.toUpperCase()} format`
+-      };
++      // Return screenshot data URL - multimodal models can process this directly
++      return dataUrl;
+       
+     } catch (error) {
+       console.error('[AI_AGENT] TakeScreenshotTool error:', error);
+       
+-      // Return error information instead of throwing to allow graceful fallback
+-      return {
+-        success: false,
+-        error: error.message,
+-        message: `Screenshot capture failed: ${error.message}`,
+-        fallback_suggestion: "Consider using get_page_content or get_dom_structure as alternative methods"
+-      };
++      // Return error message instead of throwing to allow graceful fallback
++      return `Screenshot capture failed: ${error.message}. Consider using get_page_content or get_dom_structure as alternative methods`;
++    }
++  }
++}
++
++// Tool to click at specific pixel coordinates on the page
++class ClickAtCoordinatesTool extends BrowserTool {
++  constructor() {
++    super(
++      "click_at_coordinates",
++      "Click at specific pixel coordinates on the page. Use this when you have a screenshot and need to click at a specific location.",
++      z.object({
++        tabId: CommonToolArgs.tabId.optional().describe("Tab ID (optional - will use active tab if not specified)"),
++        x: z.number().describe("X coordinate (pixels from left edge)"),
++        y: z.number().describe("Y coordinate (pixels from top edge)"),
++        button: z.enum(["left", "right", "middle"]).default("left").optional().describe("Mouse button to click")
++      })
++    );
++  }
++
++  async call({ tabId, x, y, button = "left" }) {
++    try {
++      // Use provided tabId or get active tab
++      const targetTab = tabId ? { id: tabId } : await getCurrentActiveTab();
++      const targetTabId = targetTab.id;
++      
++      console.log(`🖱️ Clicking at coordinates (${x}, ${y}) on tab ${targetTabId}`);
++      
++      // Ensure content script is loaded
++      await ensureContentScript(targetTabId);
++      
++      // Send click message to content script
++      const response = await chrome.tabs.sendMessage(targetTabId, {
++        type: 'CLICK_AT_COORDINATES',
++        data: { x, y, button }
++      });
++      
++      if (response && response.error) {
++        throw new Error(`Content script error: ${response.error}`);
++      }
++      
++      console.log(`✅ Successfully clicked at coordinates (${x}, ${y})`);
++      return `Clicked at coordinates (${x}, ${y}) with ${button} mouse button`;
++    } catch (error) {
++      console.error('[AI_AGENT] ClickAtCoordinatesTool error:', error);
++      throw new Error(`Click at coordinates failed: ${error.message}`);
++    }
++  }
++}
++
++// Tool to type text at specific pixel coordinates on the page
++class TypeAtCoordinatesTool extends BrowserTool {
++  constructor() {
++    super(
++      "type_at_coordinates", 
++      "Type text at specific pixel coordinates. Use this when you have a screenshot and need to type in a field at a specific location.",
++      z.object({
++        tabId: CommonToolArgs.tabId.optional().describe("Tab ID (optional - will use active tab if not specified)"),
++        x: z.number().describe("X coordinate (pixels from left edge)"),
++        y: z.number().describe("Y coordinate (pixels from top edge)"),
++        text: z.string().describe("Text to type"),
++        clearFirst: z.boolean().default(false).optional().describe("Clear existing content before typing")
++      })
++    );
++  }
++
++  async call({ tabId, x, y, text, clearFirst = false }) {
++    try {
++      // Use provided tabId or get active tab
++      const targetTab = tabId ? { id: tabId } : await getCurrentActiveTab();
++      const targetTabId = targetTab.id;
++      
++      console.log(`⌨️ Typing "${text}" at coordinates (${x}, ${y}) on tab ${targetTabId}`);
++      
++      // Ensure content script is loaded
++      await ensureContentScript(targetTabId);
++      
++      // Send type message to content script
++      const response = await chrome.tabs.sendMessage(targetTabId, {
++        type: 'TYPE_AT_COORDINATES',
++        data: { x, y, text, clearFirst }
++      });
++      
++      if (response && response.error) {
++        throw new Error(`Content script error: ${response.error}`);
++      }
++      
++      console.log(`✅ Successfully typed at coordinates (${x}, ${y})`);
++      return `Typed "${text}" at coordinates (${x}, ${y})${clearFirst ? ' (cleared first)' : ''}`;
++    } catch (error) {
++      console.error('[AI_AGENT] TypeAtCoordinatesTool error:', error);
++      throw new Error(`Type at coordinates failed: ${error.message}`);
+     }
+   }
+ }
+ 
+ export const browserTools = [
++  new FinishTool(),
+   new ReasoningTool(),
+   new GetActiveTabTool(),
+   new CreateNewTabTool(),
+@@ -719,7 +865,9 @@ export const browserTools = [
+   new ScrollTool(),
+   new UpdateSuggestionsTool(),
+   new AskUserQuestionTool(),
+-  new TakeScreenshotTool()
++  new TakeScreenshotTool(),
++  new ClickAtCoordinatesTool(),
++  new TypeAtCoordinatesTool()
+ ];
+ 
+ 
+diff --git a/chrome/browser/resources/vibe/content.js b/chrome/browser/resources/vibe/content.js
+index 3f0755e128..e4a57967a5 100644
+--- a/chrome/browser/resources/vibe/content.js
++++ b/chrome/browser/resources/vibe/content.js
+@@ -125,6 +125,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+           .catch(error => sendResponse({ success: false, error: String(error) }));
+         break;
+ 
++      case "CLICK_AT_COORDINATES":
++        Promise.resolve(handleClickAtCoordinates(message.data))
++          .then(result => sendResponse({ success: true, action: "clicked_at_coordinates", result }))
++          .catch(error => sendResponse({ success: false, error: String(error) }));
++        break;
++
++      case "TYPE_AT_COORDINATES":
++        Promise.resolve(handleTypeAtCoordinates(message.data))
++          .then(result => sendResponse({ success: true, action: "typed_at_coordinates", result }))
++          .catch(error => sendResponse({ success: false, error: String(error) }));
++        break;
++
+       default:
+         console.log("🤷 Unknown message type:", message.type);
+         sendResponse({ success: false, error: "Unknown message type" });
+@@ -810,6 +822,198 @@ function generateSimpleSelector(element) {
+   return selector;
+ }
+ 
++/**
++ * Handle clicking at specific coordinates
++ */
++function handleClickAtCoordinates(data) {
++  try {
++    const { x, y, button = "left" } = data;
++    
++    console.log(`🖱️ Clicking at coordinates (${x}, ${y}) with ${button} button`);
++    
++    // Find the element at the given coordinates
++    const element = document.elementFromPoint(x, y);
++    
++    if (!element) {
++      throw new Error(`No element found at coordinates (${x}, ${y})`);
++    }
++    
++    console.log(`🎯 Found element at coordinates: ${element.tagName}${element.id ? '#' + element.id : ''}${element.className ? '.' + element.className.split(' ')[0] : ''}`);
++    
++    // Create and dispatch mouse events
++    const mouseDownEvent = new MouseEvent('mousedown', {
++      bubbles: true,
++      cancelable: true,
++      clientX: x,
++      clientY: y,
++      button: button === 'right' ? 2 : button === 'middle' ? 1 : 0
++    });
++    
++    const mouseUpEvent = new MouseEvent('mouseup', {
++      bubbles: true,
++      cancelable: true,
++      clientX: x,
++      clientY: y,
++      button: button === 'right' ? 2 : button === 'middle' ? 1 : 0
++    });
++    
++    const clickEvent = new MouseEvent('click', {
++      bubbles: true,
++      cancelable: true,
++      clientX: x,
++      clientY: y,
++      button: button === 'right' ? 2 : button === 'middle' ? 1 : 0
++    });
++    
++    // Dispatch the events in sequence
++    element.dispatchEvent(mouseDownEvent);
++    element.dispatchEvent(mouseUpEvent);
++    element.dispatchEvent(clickEvent);
++    
++    // For right clicks, also dispatch contextmenu event
++    if (button === 'right') {
++      const contextMenuEvent = new MouseEvent('contextmenu', {
++        bubbles: true,
++        cancelable: true,
++        clientX: x,
++        clientY: y
++      });
++      element.dispatchEvent(contextMenuEvent);
++    }
++    
++    return {
++      success: true,
++      element: {
++        tagName: element.tagName,
++        id: element.id || null,
++        className: element.className || null,
++        textContent: element.textContent?.substring(0, 50) || null
++      },
++      coordinates: { x, y },
++      button
++    };
++    
++  } catch (error) {
++    console.log(`❌ Error clicking at coordinates: ${error.message}`);
++    throw error;
++  }
++}
++
++/**
++ * Handle typing at specific coordinates
++ */
++function handleTypeAtCoordinates(data) {
++  try {
++    const { x, y, text, clearFirst = false } = data;
++    
++    console.log(`⌨️ Typing "${text}" at coordinates (${x}, ${y})`);
++    
++    // Find the element at the given coordinates
++    const element = document.elementFromPoint(x, y);
++    
++    if (!element) {
++      throw new Error(`No element found at coordinates (${x}, ${y})`);
++    }
++    
++    console.log(`🎯 Found element at coordinates: ${element.tagName}${element.id ? '#' + element.id : ''}${element.className ? '.' + element.className.split(' ')[0] : ''}`);
++    
++    // Check if element can accept text input
++    const inputElements = ['INPUT', 'TEXTAREA'];
++    const isContentEditable = element.contentEditable === 'true';
++    
++    if (!inputElements.includes(element.tagName) && !isContentEditable) {
++      throw new Error(`Element at coordinates (${x}, ${y}) is not a text input field (${element.tagName})`);
++    }
++    
++    // Focus the element first
++    element.focus();
++    
++    // Click at the coordinates to position cursor
++    const clickEvent = new MouseEvent('click', {
++      bubbles: true,
++      cancelable: true,
++      clientX: x,
++      clientY: y
++    });
++    element.dispatchEvent(clickEvent);
++    
++    // Clear existing content if requested
++    if (clearFirst) {
++      if (inputElements.includes(element.tagName)) {
++        element.value = '';
++      } else if (isContentEditable) {
++        element.textContent = '';
++      }
++      
++      // Dispatch input event for clearing
++      element.dispatchEvent(new Event('input', { bubbles: true }));
++    }
++    
++    // Type the text character by character to simulate real typing
++    if (inputElements.includes(element.tagName)) {
++      // For input/textarea elements
++      const currentValue = element.value || '';
++      const newValue = clearFirst ? text : currentValue + text;
++      element.value = newValue;
++      
++      // Dispatch input and change events
++      element.dispatchEvent(new Event('input', { bubbles: true }));
++      element.dispatchEvent(new Event('change', { bubbles: true }));
++      
++    } else if (isContentEditable) {
++      // For contentEditable elements
++      const currentContent = element.textContent || '';
++      const newContent = clearFirst ? text : currentContent + text;
++      element.textContent = newContent;
++      
++      // Dispatch input event
++      element.dispatchEvent(new Event('input', { bubbles: true }));
++    }
++    
++    // Dispatch keyboard events for each character
++    for (let i = 0; i < text.length; i++) {
++      const char = text[i];
++      const keyCode = char.charCodeAt(0);
++      
++      const keyDownEvent = new KeyboardEvent('keydown', {
++        bubbles: true,
++        cancelable: true,
++        key: char,
++        keyCode: keyCode,
++        which: keyCode
++      });
++      
++      const keyUpEvent = new KeyboardEvent('keyup', {
++        bubbles: true,
++        cancelable: true,
++        key: char,
++        keyCode: keyCode,
++        which: keyCode
++      });
++      
++      element.dispatchEvent(keyDownEvent);
++      element.dispatchEvent(keyUpEvent);
++    }
++    
++    return {
++      success: true,
++      element: {
++        tagName: element.tagName,
++        id: element.id || null,
++        className: element.className || null,
++        value: element.value || element.textContent || null
++      },
++      coordinates: { x, y },
++      text,
++      clearFirst
++    };
++    
++  } catch (error) {
++    console.log(`❌ Error typing at coordinates: ${error.message}`);
++    throw error;
++  }
++}
++
+ // Initialize when DOM is ready
+ if (document.readyState === "loading") {
+   document.addEventListener("DOMContentLoaded", init);
+-- 
+2.50.0
+
