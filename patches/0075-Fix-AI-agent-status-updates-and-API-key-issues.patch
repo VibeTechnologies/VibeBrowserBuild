@@ -1,0 +1,137 @@
+From b6e26bbcdb3e6384d0021e7947757cefb7d76452 Mon Sep 17 00:00:00 2001
+From: Den <2119348+dzianisv@users.noreply.github.com>
+Date: Wed, 30 Jul 2025 00:19:45 +0300
+Subject: [PATCH 75/91] Fix AI agent status updates and API key issues
+
+- Fixed typo in ai_agent.js: 'esult' -> 'result' that caused ReferenceError
+- Added missing config parameter to omnibox handler in background.js
+- Added hardcoded API keys for testing (temporary fix for environment sync)
+- Enhanced debug logging for future troubleshooting
+
+This resolves the issue where Chat4 UI wasn't showing agent status updates because the agent was crashing on execution due to the typo and missing configuration.
+---
+ chrome/browser/resources/vibe/ai_agent.js   |  8 ++-
+ chrome/browser/resources/vibe/background.js | 54 ++++++++-------------
+ 2 files changed, 26 insertions(+), 36 deletions(-)
+
+diff --git a/chrome/browser/resources/vibe/ai_agent.js b/chrome/browser/resources/vibe/ai_agent.js
+index cd8e8455ca..83aaf6762f 100644
+--- a/chrome/browser/resources/vibe/ai_agent.js
++++ b/chrome/browser/resources/vibe/ai_agent.js
+@@ -96,14 +96,20 @@ export class VibeLangchainAgent {
+    * @private
+    */
+   async createLLM(config, langchainTools) {
++    console.log('🔧 [AI_AGENT] createLLM called with config:', JSON.stringify(config, null, 2));
++    
+     // Model selection and API key resolution
+     // Handle both old (apiKey) and new (apiKeys) config formats
+     const provider = config.provider || 'openai';
+     let apiKey = config.apiKey; // Backward compatibility
+ 
++    console.log('🔑 [AI_AGENT] Initial apiKey:', apiKey ? 'set' : 'not set');
++    console.log('🔑 [AI_AGENT] Provider:', provider);
++
+     // Use new apiKeys format if available
+     if (config.apiKeys && config.apiKeys[provider]) {
+       apiKey = config.apiKeys[provider];
++      console.log('🔑 [AI_AGENT] Using apiKey from apiKeys object');
+     }
+ 
+     let modelName = config.model || "openai:gpt-4o-mini";
+@@ -395,7 +401,7 @@ If you encounter issues that prevent completion, use FinishTool to explain what
+     console.log(`[AI_AGENT] Executing: "${user_request}"`);
+ 
+     // Race between executor and abort signal
+-    const esult = await executor.invoke({
++    const result = await executor.invoke({
+       input: user_request
+     }, { callbacks });
+ 
+diff --git a/chrome/browser/resources/vibe/background.js b/chrome/browser/resources/vibe/background.js
+index bb0139c6b4..8104e78d90 100644
+--- a/chrome/browser/resources/vibe/background.js
++++ b/chrome/browser/resources/vibe/background.js
+@@ -1,6 +1,9 @@
+ // @ts-nocheck
+ // background.js - Chrome Extension Service Worker
+ import { VibeLangchainAgent } from "./ai_agent.js";
++
++console.log('🚀 [BACKGROUND] VIBE BACKGROUND SCRIPT LOADED WITH HARDCODED API KEYS!');
++
+ let currentOperations = new Map();
+ const aiAgent = new VibeLangchainAgent();
+ 
+@@ -183,42 +186,19 @@ async function getBrowserSettingsViaMessage() {
+     }
+     
+     console.log('✅ [CONFIG] Browser preferences loaded - foundPrefs:', Object.keys(vibePrefs).length);
++    console.log('✅ [CONFIG] vibePrefs contents:', JSON.stringify(vibePrefs));
+     console.log('✅ [CONFIG] API keys: OpenAI:', !!(vibePrefs['vibe_ai.openai_api_key']), 'Gemini:', !!(vibePrefs['vibe_ai.gemini_api_key']));
+     
+-    // If no API keys found in preferences, call the new sync function to update from environment
+-    if (!vibePrefs['vibe_ai.openai_api_key'] && !vibePrefs['vibe_ai.gemini_api_key']) {
+-      console.log('🔍 [CONFIG] No API keys in preferences, calling syncEnvironmentToPreferences...');
+-      
+-      try {
+-        // Call the new C++ function that syncs environment variables to preferences
+-        const syncResult = await new Promise((resolve) => {
+-          chrome.send('syncEnvironmentToPreferences', [
+-            (result) => resolve(result)
+-          ]);
+-        });
+-        
+-        console.log('🔄 [CONFIG] Environment sync result:', JSON.stringify(syncResult));
+-        
+-        // Re-read preferences after sync
+-        const updatedPreferences = await new Promise((resolve) => {
+-          chrome.settingsPrivate.getAllPrefs((prefs) => {
+-            resolve(prefs || []);
+-          });
+-        });
+-        
+-        // Update vibePrefs with fresh data
+-        for (const pref of updatedPreferences) {
+-          if (pref.key && pref.key.startsWith('vibe_ai.')) {
+-            vibePrefs[pref.key] = pref.value;
+-          }
+-        }
+-        
+-        console.log('🔄 [CONFIG] After environment sync - API keys: OpenAI:', !!(vibePrefs['vibe_ai.openai_api_key']), 'Gemini:', !!(vibePrefs['vibe_ai.gemini_api_key']));
+-        
+-      } catch (e) {
+-        console.log('🔍 [CONFIG] Environment sync attempt failed:', e.message);
+-      }
+-    }
++    // Always use hardcoded fallback for testing (override any empty values)
++    console.log('🔑 [CONFIG] Using hardcoded API keys for testing...');
++    
++    // TEMPORARY: Hardcode API keys for testing
++    vibePrefs['vibe_ai.openai_api_key'] = '[REMOVED_OPENAI_KEY]';
++    vibePrefs['vibe_ai.gemini_api_key'] = '[REMOVED_GEMINI_KEY]';
++    vibePrefs['vibe_ai.provider'] = 'openai';
++    vibePrefs['vibe_ai.model'] = 'gpt-4o-mini';
++    
++    console.log('🔑 [CONFIG] Hardcoded API keys set for testing');
+     
+     // Create configuration object based on browser preferences
+     const environmentConfiguration = {
+@@ -309,10 +289,14 @@ chrome.omnibox.onInputEntered.addListener(async (text, disposition) => {
+       message: `Processing: "${text}"`
+     });
+     
++    // Get AI configuration for API key
++    const config = await getAIConfiguration();
++    
+     // Process the query with AI agent
+     const aiResponse = await aiAgent.processUserRequest({
+       user_request: text,
+-      tabId: activeTab.id
++      tabId: activeTab.id,
++      config: config
+     });
+     
+     // Send result to side panel
+-- 
+2.50.0
+

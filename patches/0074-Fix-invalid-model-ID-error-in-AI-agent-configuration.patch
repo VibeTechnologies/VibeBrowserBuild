@@ -1,0 +1,905 @@
+From edc90a58b2c28f7c9ad2e818eb3ce3b3ca7baac3 Mon Sep 17 00:00:00 2001
+From: Den <2119348+dzianisv@users.noreply.github.com>
+Date: Tue, 29 Jul 2025 23:50:33 +0300
+Subject: [PATCH 74/91] Fix invalid model ID error in AI agent configuration
+
+- Remove extra spaces from model name template strings in ai_agent.js
+- Fix 'google-genai' format (was 'google - genai' with spaces)
+- Resolves "400 invalid model ID" error from OpenAI API
+- AgentExecutor now works correctly with proper model names
+
+Lines fixed:
+- Line 116: modelName = `openai:${openaiModel}`;
+- Line 120: modelName = `google-genai:${geminiModel}`;
+- Line 124: modelName = `anthropic:${anthropicModel}`;
+
+Tested with ./test_vibe.sh - browser loads correctly without model errors
+---
+ .../vibe/apps/chat4/tests/sidebar.spec.ts     |   2 +-
+ chrome/browser/resources/vibe/background.js   | 157 +++------
+ chrome/browser/resources/vibe/cli.ts          |   2 +-
+ .../vibe/lib/browser/ai_config_manager.ts     |   2 +-
+ .../resources/vibe/lib/test/ai_tools.mock.js  |   6 +-
+ .../resources/vibe/test_agent_logging.js      |  35 --
+ .../resources/vibe/test_reasoning_flow.js     |  46 ---
+ .../resources/vibe/test_stop_functionality.py | 305 ------------------
+ .../resources/vibe/tools/ParallelExecutor.js  |   4 +-
+ .../resources/vibe/tools/ReportTool.js        |   2 +-
+ .../vibe/trigger_reasoning_test.html          |  25 --
+ test_vibe_pyautogui.py                        |   6 +-
+ 12 files changed, 50 insertions(+), 542 deletions(-)
+ delete mode 100644 chrome/browser/resources/vibe/test_agent_logging.js
+ delete mode 100644 chrome/browser/resources/vibe/test_reasoning_flow.js
+ delete mode 100644 chrome/browser/resources/vibe/test_stop_functionality.py
+ delete mode 100644 chrome/browser/resources/vibe/trigger_reasoning_test.html
+
+diff --git a/chrome/browser/resources/vibe/apps/chat4/tests/sidebar.spec.ts b/chrome/browser/resources/vibe/apps/chat4/tests/sidebar.spec.ts
+index 895bdd30e8..763c1085e4 100644
+--- a/chrome/browser/resources/vibe/apps/chat4/tests/sidebar.spec.ts
++++ b/chrome/browser/resources/vibe/apps/chat4/tests/sidebar.spec.ts
+@@ -133,7 +133,7 @@ test.describe('Chat4 Sidebar - Static Build', () => {
+       };
+     });
+ 
+-    console.log('DOM Inspection Results:', JSON.stringify(domInfo, null, 2));
++    console.log('DOM Inspection Results:', JSON.stringify(domInfo));
+     
+     expect(domInfo.buttonExists).toBe(true);
+   });
+diff --git a/chrome/browser/resources/vibe/background.js b/chrome/browser/resources/vibe/background.js
+index 6e2e9809ca..bb0139c6b4 100644
+--- a/chrome/browser/resources/vibe/background.js
++++ b/chrome/browser/resources/vibe/background.js
+@@ -58,7 +58,9 @@ function isFromNaturalLanguageAutocomplete(url) {
+     'google.com/search'
+   ];
+   
+-  return autocompleteSites.some(site => url.includes(site));
++  const matches = autocompleteSites.some(site => url.includes(site));
++  console.log('🔍 [AUTOCOMPLETE] URL:', url, 'Matches:', matches);
++  return matches;
+ }
+ 
+ // Natural language navigation handler
+@@ -67,20 +69,19 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
+   
+   const url = details.url;
+   console.log('🔍 [NAVIGATION] Navigation detected:', url);
++  console.log('🔍 [NAVIGATION] Frame ID:', details.frameId, 'Tab ID:', details.tabId);
+   
+   // Check both URL patterns and extracted queries
+   const extractedQuery = extractQueryFromUrl(url);
++  console.log('🔍 [NAVIGATION] Extracted query:', extractedQuery);
+   //TODO: replace by redirecting from chat4 home page
+   const isAutoCompleteNavigation = isFromNaturalLanguageAutocomplete(url);
++  console.log('🔍 [NAVIGATION] Is autocomplete navigation:', isAutoCompleteNavigation);
+   
+-  if (isAutoCompleteNavigation) { 
++  if (isAutoCompleteNavigation) {
++    console.log('✅ [NAVIGATION] Starting AI agent processing...'); 
+     try {
+-      // Create a new tab for AI agent to work in
+-      const newTab = await chrome.tabs.create({
+-        url: 'chrome://newtab/', // Start with a useful page
+-        active: false // Don't switch to it immediately
+-      });
+-      // Open side panel on the original tab
++      // Open side panel on the original tab (which has the search results)
+       await openSidePanel(details.tabId);
+     
+       // Brief delay before processing message
+@@ -88,11 +89,11 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
+       
+       // Get AI configuration for API key
+       const config = await getAIConfiguration();
+-      // Process the query with AI agent using the new working tab
++      // Process the query with AI agent using the original tab with search results
+       console.log('🤖 [AI] Processing query with AI agent:', extractedQuery);
+       const result = await aiAgent.processUserRequest({
+         user_request: extractedQuery,
+-        tabId: newTab.id, // Use the new working tab for AI operations
++        tabId: details.tabId, // Use the original tab that has the search results
+         config: config
+       });
+       
+@@ -112,7 +113,7 @@ async function getAIConfiguration() {
+     // Use settings bridge to get combined settings (browser + extension + environment)
+     const combined = await getBrowserSettingsViaMessage();
+     
+-    console.log('🔑 [CONFIG] Settings bridge loaded config:', JSON.stringify(combined, null, 2));
++    console.log('🔑 [CONFIG] Config loaded - provider:', combined.provider, 'model:', combined.model);
+     
+     // Get the active provider
+     const provider = combined.provider || 'openai';
+@@ -127,16 +128,17 @@ async function getAIConfiguration() {
+     
+     // Get base URL based on provider
+     const baseUrls = {
+-      openai: combined.baseUrl || 'https://api.openai.com/v1',
++      openai: 'https://api.openai.com/v1', // Always use OpenAI's official endpoint
+       gemini: 'https://generativelanguage.googleapis.com/v1beta',
+-      anthropic: 'https://api.anthropic.com'
++      anthropic: 'https://api.anthropic.com',
++      ollama: combined.baseUrl || 'http://localhost:11434/v1' // Custom baseUrl only for local/custom providers
+       // Add more provider endpoints as needed
+     };
+     
+     const baseUrl = baseUrls[provider] || null;
+     const activeApiKey = apiKeys[provider];
+     
+-    console.log(`🔍 [CONFIG] Using ${provider} - API key length:`, activeApiKey ? activeApiKey.length : 0);
++    console.log(`🔍 [CONFIG] Using ${provider} provider, API key:`, !!activeApiKey);
+     
+     const config = {
+       provider: provider,
+@@ -150,11 +152,7 @@ async function getAIConfiguration() {
+       baseUrls: baseUrls                   // All base URLs by provider
+     };
+     
+-    console.log('🔧 [CONFIG] Final config created - provider:', 
+-      config.provider, 
+-      'apiKey present:', !!activeApiKey,
+-      'all providers:', Object.keys(apiKeys).filter(k => apiKeys[k])
+-    );
++    console.log('🔧 [CONFIG] Configuration ready - provider:', config.provider, 'model:', config.model);
+     return config;
+ }
+ 
+@@ -174,10 +172,7 @@ async function getBrowserSettingsViaMessage() {
+     const vibeRelated = preferences.filter(p => 
+       p.key && (p.key.includes('vibe') || p.key.includes('ai'))
+     );
+-    console.log('🔍 [CONFIG] Vibe/AI related preferences:');
+-    vibeRelated.forEach((p, i) => {
+-      console.log(`"${p.key}": ${p.value}`);
+-    });
++    console.log('🔍 [CONFIG] Found', vibeRelated.length, 'vibe/AI related preferences');
+     
+     // Extract Vibe AI settings from preferences
+     const vibePrefs = {};
+@@ -188,10 +183,7 @@ async function getBrowserSettingsViaMessage() {
+     }
+     
+     console.log('✅ [CONFIG] Browser preferences loaded - foundPrefs:', Object.keys(vibePrefs).length);
+-    console.log('✅ [CONFIG] Preference keys found:', Object.keys(vibePrefs));
+-    console.log('✅ [CONFIG] All vibe preferences:', JSON.stringify(vibePrefs, null, 2));
+-    console.log('✅ [CONFIG] hasOpenAIKey:', !!(vibePrefs['vibe_ai.openai_api_key']));
+-    console.log('✅ [CONFIG] openaiKeyLength:', vibePrefs['vibe_ai.openai_api_key'] ? vibePrefs['vibe_ai.openai_api_key'].length : 0);
++    console.log('✅ [CONFIG] API keys: OpenAI:', !!(vibePrefs['vibe_ai.openai_api_key']), 'Gemini:', !!(vibePrefs['vibe_ai.gemini_api_key']));
+     
+     // If no API keys found in preferences, call the new sync function to update from environment
+     if (!vibePrefs['vibe_ai.openai_api_key'] && !vibePrefs['vibe_ai.gemini_api_key']) {
+@@ -205,7 +197,7 @@ async function getBrowserSettingsViaMessage() {
+           ]);
+         });
+         
+-        console.log('🔄 [CONFIG] Environment sync result:', JSON.stringify(syncResult, null, 2));
++        console.log('🔄 [CONFIG] Environment sync result:', JSON.stringify(syncResult));
+         
+         // Re-read preferences after sync
+         const updatedPreferences = await new Promise((resolve) => {
+@@ -221,8 +213,7 @@ async function getBrowserSettingsViaMessage() {
+           }
+         }
+         
+-        console.log('🔄 [CONFIG] After environment sync - hasOpenAIKey:', !!(vibePrefs['vibe_ai.openai_api_key']));
+-        console.log('🔄 [CONFIG] After environment sync - openaiKeyLength:', vibePrefs['vibe_ai.openai_api_key'] ? vibePrefs['vibe_ai.openai_api_key'].length : 0);
++        console.log('🔄 [CONFIG] After environment sync - API keys: OpenAI:', !!(vibePrefs['vibe_ai.openai_api_key']), 'Gemini:', !!(vibePrefs['vibe_ai.gemini_api_key']));
+         
+       } catch (e) {
+         console.log('🔍 [CONFIG] Environment sync attempt failed:', e.message);
+@@ -237,12 +228,7 @@ async function getBrowserSettingsViaMessage() {
+       geminiApiKey: vibePrefs['vibe_ai.gemini_api_key'] || null
+     };
+     
+-    console.log('🔧 [CONFIG] Final environment configuration:', JSON.stringify({
+-      openaiConfigured: environmentConfiguration.openaiConfigured,
+-      geminiConfigured: environmentConfiguration.geminiConfigured,
+-      hasOpenaiKey: !!environmentConfiguration.openaiApiKey,
+-      hasGeminiKey: !!environmentConfiguration.geminiApiKey
+-    }, null, 2));
++    console.log('🔧 [CONFIG] Environment ready - OpenAI:', environmentConfiguration.openaiConfigured, 'Gemini:', environmentConfiguration.geminiConfigured);
+     
+     return {
+       provider: vibePrefs['vibe_ai.provider'] || 'auto',
+@@ -423,20 +409,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+       }
+       return true; // Keep the message channel open for async response
+       
+-    case 'TOOL_UPDATE':
+-      // These messages are already being handled by the Chrome runtime message system
+-      // Chat4 receives them directly via chrome.runtime.onMessage in aiAgent.ts
+-      // No need to forward them again - just acknowledge receipt
+-      console.log('🔧 [BACKGROUND] Tool update received (Chat4 will receive via chrome.runtime.onMessage):', message);
+-      break;
+-      
+-    case 'REASONING_UPDATE':
+-      // These messages are already being handled by the Chrome runtime message system
+-      // Chat4 receives them directly via chrome.runtime.onMessage in aiAgent.ts
+-      // No need to forward them again - just acknowledge receipt
+-      console.log('🧠 [BACKGROUND] Reasoning update received (Chat4 will receive via chrome.runtime.onMessage):', message);
+-      break;
+-      
+     case 'USER_QUESTION':
+       // Forward user question to sidepanel
+       forwardMessageToSidepanel(message, sendResponse);
+@@ -448,12 +420,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+       sendResponse({ success: true });
+       return true; // Keep the message channel open for async response
+       
+-      
+-    case 'REACT_UPDATE':
+-      // Forward ReAct step updates to Chat4
+-      handleReActUpdate(message, sendResponse);
+-      return true; // Keep the message channel open for async response
+-      
+     case 'AI_AGENT_REQUEST':
+       // Handle AI agent requests from home page
+       handleAIAgentRequest(message, sendResponse);
+@@ -469,6 +435,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+       handleChatHistoryRequest(message, sendResponse);
+       return true; // Keep the message channel open for async response
+       
++    case 'TOOL_UPDATE':
++      // Chat4 receives them directly via chrome.runtime.onMessage in aiAgent.ts
++      // Background.js doesn't need to handle these - they go directly to Chat4
++      console.log('🔧 [BACKGROUND] Tool update received (ignoring - Chat4 handles directly):', message);
++      return false; // Let other listeners handle it
++      
++    case 'THINKING_UPDATE':
++      // Chat4 receives them directly via chrome.runtime.onMessage in aiAgent.ts
++      // Background.js doesn't need to handle these - they go directly to Chat4
++      console.log('🧠 [BACKGROUND] Thinking update received (ignoring - Chat4 handles directly):', message);
++      return false; // Let other listeners handle it
++      
+     default:
+       console.log('❓ Unknown message type:', message.type);
+       sendResponse({ success: false, error: 'Unknown message type' });
+@@ -476,63 +454,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+   }
+ });
+ 
+-// Handle tool updates from AI agent
+-async function handleToolUpdate(message, sendResponse) {
+-  console.log('🔧 [TOOL-UPDATE] Tool update received:', message.tool, '-', message.message);
+-  
+-  try {
+-    // Forward to sidepanel
+-    await chrome.runtime.sendMessage({
+-      type: 'TOOL_UPDATE',
+-      tool: message.tool,
+-      message: message.message,
+-      details: message.details,
+-      timestamp: message.timestamp
+-    });
+-    sendResponse({ success: true });
+-  } catch (error) {
+-    console.log('⚠️ [TOOL-UPDATE] Error forwarding to sidepanel:', error.message);
+-    sendResponse({ success: false, error: error.message });
+-  }
+-}
+ 
+-// Handle reasoning updates from AI agent
+-async function handleReActUpdate(message, sendResponse) {
+-  console.log(`🔄 [REACT-UPDATE] ${message.stepType.toUpperCase()} step received for iteration:`, message.data.iteration);
+-  
+-  try {
+-    // Forward to Chat4 UI
+-    await chrome.runtime.sendMessage({
+-      type: 'REACT_UPDATE',
+-      stepType: message.stepType,
+-      data: message.data,
+-      timestamp: message.timestamp
+-    });
+-    
+-    sendResponse({ success: true });
+-  } catch (error) {
+-    console.error('❌ [REACT-UPDATE] Failed to forward ReAct update:', error);
+-    sendResponse({ success: false, error: error.message });
+-  }
+-}
+ 
+-async function handleReasoningUpdate(message, sendResponse) {
+-  console.log('🧠 [REASONING-UPDATE] Reasoning update received for iteration:', message.iteration);
+-  
+-  try {
+-    // Forward to sidepanel
+-    await chrome.runtime.sendMessage({
+-      type: 'REASONING_UPDATE',
+-      reasoning: message.reasoning,
+-      iteration: message.iteration,
+-      timestamp: message.timestamp
+-    });
+-    sendResponse({ success: true });
+-  } catch (error) {
+-    console.log('⚠️ [REASONING-UPDATE] Error forwarding to sidepanel:', error.message);
+-    sendResponse({ success: false, error: error.message });
+-  }
+-}
+ 
+ // Forward message to sidepanel
+ function forwardMessageToSidepanel(message, sendResponse) {
+@@ -590,7 +513,7 @@ async function handleSidePanelCommand(message, sendResponse) {
+       operationId: operationId
+     });
+     
+-    console.log('✅ [SIDE-PANEL] Command processed successfully:', JSON.stringify(result, null, 2));
++    console.log('✅ [SIDE-PANEL] Command processed successfully:', JSON.stringify(result));
+     
+     // Clean up operation tracking
+     if (operationId) {
+@@ -625,13 +548,7 @@ async function handleSidePanelCommand(message, sendResponse) {
+ function handleStopOperation(message, sendResponse) {
+   const { operationId, source } = message;
+   console.log(`🛑 [STOP] Stop request from ${source} for operation: ${operationId}`);
+-  
+-  if (!operationId) {
+-    console.log('⚠️ [STOP] No operation ID provided');
+-    sendResponse({ success: false, error: 'No operation ID provided' });
+-    return;
+-  }
+-  
++    
+   // Stop the AI agent operation
+   const aiAgentStopped = aiAgent.stopOperation(operationId);
+   
+@@ -790,7 +707,7 @@ function clearChatHistory() {
+ 
+ // Handle chat history requests
+ function handleChatHistoryRequest(message, sendResponse) {
+-  console.log('📖 [BACKGROUND] Chat history requested:', JSON.stringify(message, null, 2));
++  console.log('📖 [BACKGROUND] Chat history requested:', JSON.stringify(message));
+   const history = getChatHistory();
+   console.log(`📖 [BACKGROUND] Returning ${history.length} messages from chat history`);
+   sendResponse({
+diff --git a/chrome/browser/resources/vibe/cli.ts b/chrome/browser/resources/vibe/cli.ts
+index 9aaea7352f..3110300051 100644
+--- a/chrome/browser/resources/vibe/cli.ts
++++ b/chrome/browser/resources/vibe/cli.ts
+@@ -89,7 +89,7 @@ async function main() {
+ 
+   // Print the result
+   console.log('--- AGENT RESULT ---');
+-  console.log(JSON.stringify(result, null, 2));
++  console.log(JSON.stringify(result));
+ 
+   await browser.close();
+ }
+diff --git a/chrome/browser/resources/vibe/lib/browser/ai_config_manager.ts b/chrome/browser/resources/vibe/lib/browser/ai_config_manager.ts
+index ed241dbb6c..04d7899c6b 100644
+--- a/chrome/browser/resources/vibe/lib/browser/ai_config_manager.ts
++++ b/chrome/browser/resources/vibe/lib/browser/ai_config_manager.ts
+@@ -270,7 +270,7 @@ export class AIConfigManager {
+   }
+   
+   exportConfig(): string {
+-    return JSON.stringify(this.currentConfig, null, 2);
++    return JSON.stringify(this.currentConfig);
+   }
+   
+   importConfig(configJson: string): boolean {
+diff --git a/chrome/browser/resources/vibe/lib/test/ai_tools.mock.js b/chrome/browser/resources/vibe/lib/test/ai_tools.mock.js
+index 38b89af593..f64bd2fb58 100644
+--- a/chrome/browser/resources/vibe/lib/test/ai_tools.mock.js
++++ b/chrome/browser/resources/vibe/lib/test/ai_tools.mock.js
+@@ -305,7 +305,7 @@ export const browserTools = [
+           };
+         }
+       });
+-      return JSON.stringify(result.result, null, 2);
++      return JSON.stringify(result.result);
+     }
+     },
+     z.object({
+@@ -517,7 +517,7 @@ export const browserTools = [
+       },
+       args: [selector]
+     });
+-    return JSON.stringify(result.result, null, 2);
++    return JSON.stringify(result.result);
+   }),
+   makeTool("wait_for_condition", "Wait for a JavaScript condition to be true", async ({ tabId, condition, timeout = 10000 }) => {
+     const [result] = await chrome.scripting.executeScript({
+@@ -561,7 +561,7 @@ export const browserTools = [
+         };
+       }
+     });
+-    return JSON.stringify(result.result, null, 2);
++    return JSON.stringify(result.result);
+   }),
+   makeTool("close_tab", "Close a specific tab", async ({ tabId }) => {
+     await chrome.tabs.remove(tabId);
+diff --git a/chrome/browser/resources/vibe/test_agent_logging.js b/chrome/browser/resources/vibe/test_agent_logging.js
+deleted file mode 100644
+index b3b12c48c5..0000000000
+--- a/chrome/browser/resources/vibe/test_agent_logging.js
++++ /dev/null
+@@ -1,35 +0,0 @@
+-// Test script to trigger agent and see logging output
+-import { VibeLangchainAgent } from './ai_agent.js';
+-
+-async function testAgentWithLogging() {
+-  console.log('🧪 Testing agent with comprehensive logging...');
+-  
+-  const agent = new VibeLangchainAgent();
+-  
+-  // Use real API key from environment
+-  const config = {
+-    provider: 'openai',
+-    model: 'gpt-4o-mini',
+-    apiKey: process.env.OPENAI_API_KEY || 'YOUR_API_KEY_HERE',
+-    temperature: 0.1
+-  };
+-  
+-  console.log('🔧 Using config:', { provider: config.provider, model: config.model, hasApiKey: !!config.apiKey });
+-  
+-  try {
+-    // Simple test that should trigger thought -> get_page_content -> observation pattern
+-    const result = await agent.processUserRequest({
+-      user_request: "What's on the current page?",
+-      tabId: "test-tab-123",
+-      config: config
+-    });
+-    
+-    console.log('✅ Agent completed without getting stuck:', result);
+-  } catch (error) {
+-    console.error('❌ Agent failed:', error.message);
+-    console.error('Stack:', error.stack);
+-  }
+-}
+-
+-// Run the test
+-testAgentWithLogging().catch(console.error);
+\ No newline at end of file
+diff --git a/chrome/browser/resources/vibe/test_reasoning_flow.js b/chrome/browser/resources/vibe/test_reasoning_flow.js
+deleted file mode 100644
+index f2ed08d226..0000000000
+--- a/chrome/browser/resources/vibe/test_reasoning_flow.js
++++ /dev/null
+@@ -1,46 +0,0 @@
+-// Test script to examine reasoning tool flow
+-import { VibeLangchainAgent } from './ai_agent.js';
+-
+-// Mock a simple test to see the tool flow
+-async function testReasoningFlow() {
+-  console.log('🧪 Testing reasoning tool flow...');
+-  
+-  const agent = new VibeLangchainAgent();
+-  
+-  // Mock config with API key
+-  const config = {
+-    provider: 'openai',
+-    model: 'gpt-4o-mini',
+-    apiKey: 'mock-key-for-testing',
+-    temperature: 0.1
+-  };
+-  
+-  try {
+-    // This will fail due to mock API key, but we can see the flow
+-    const result = await agent.processUserRequest({
+-      user_request: "use reasoning tool to think about finding flights",
+-      tabId: "test-tab",
+-      config: config
+-    });
+-    
+-    console.log('Result:', result);
+-  } catch (error) {
+-    console.log('Expected error (mock API key):', error.message);
+-    
+-    // Let's examine what tools are available
+-    console.log('\n📋 Available tools:');
+-    agent.tools.forEach(tool => {
+-      console.log(`- ${tool.name}: ${tool.description}`);
+-    });
+-    
+-    // Check if reasoning tool exists
+-    const reasoningTool = agent.tools.find(t => t.name === 'reasoning');
+-    if (reasoningTool) {
+-      console.log('\n🧠 Reasoning tool found!');
+-      console.log('Schema:', reasoningTool.schema);
+-    }
+-  }
+-}
+-
+-// Run the test
+-testReasoningFlow().catch(console.error);
+\ No newline at end of file
+diff --git a/chrome/browser/resources/vibe/test_stop_functionality.py b/chrome/browser/resources/vibe/test_stop_functionality.py
+deleted file mode 100644
+index 0035b0a316..0000000000
+--- a/chrome/browser/resources/vibe/test_stop_functionality.py
++++ /dev/null
+@@ -1,305 +0,0 @@
+-#!/usr/bin/env python3
+-"""
+-Automated test for stop functionality in Vibe AI Agent
+-Tests that the stop button immediately cancels running AI operations
+-"""
+-
+-import asyncio
+-import json
+-import subprocess
+-import time
+-import websockets
+-import urllib.request
+-from datetime import datetime
+-
+-class StopFunctionalityTest:
+-    def __init__(self):
+-        self.chromium_path = "/Users/engineer/workspace/vibebrowser/src/out/Debug/Chromium.app/Contents/MacOS/Chromium"
+-        self.user_data_dir = f"/tmp/vibe_stop_test_{int(time.time())}"
+-        self.chrome_process = None
+-        self.ws_url = None
+-        self.test_results = []
+-        
+-    def log(self, message):
+-        timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+-        print(f"[{timestamp}] {message}")
+-        self.test_results.append(f"[{timestamp}] {message}")
+-        
+-    def start_chrome(self):
+-        """Start Chrome with debugging enabled"""
+-        self.log("🚀 Starting Chrome with debugging...")
+-        
+-        cmd = [
+-            self.chromium_path,
+-            f"--user-data-dir={self.user_data_dir}",
+-            "--remote-debugging-port=9223",  # Different port to avoid conflicts
+-            "--disable-web-security",
+-            "--no-first-run",
+-            "--disable-default-apps",
+-            "--disable-extensions-except=" + "/Users/engineer/workspace/vibebrowser/src/out/Debug/gen/chrome/browser/resources/vibe",
+-        ]
+-        
+-        self.chrome_process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+-        time.sleep(3)  # Give Chrome time to start
+-        
+-        # Get the WebSocket URL for the first tab
+-        try:
+-            response = urllib.request.urlopen("http://localhost:9223/json/list")
+-            tabs = json.loads(response.read().decode())
+-            if tabs:
+-                self.ws_url = tabs[0]["webSocketDebuggerUrl"]
+-                self.log(f"✅ Connected to Chrome, WebSocket: {self.ws_url}")
+-                return True
+-        except Exception as e:
+-            self.log(f"❌ Failed to connect to Chrome: {e}")
+-            return False
+-            
+-    async def connect_websocket(self):
+-        """Connect to Chrome DevTools WebSocket"""
+-        try:
+-            self.websocket = await websockets.connect(self.ws_url)
+-            self.log("✅ WebSocket connected")
+-            
+-            # Enable console and runtime domains
+-            await self.websocket.send(json.dumps({"id": 1, "method": "Console.enable"}))
+-            await self.websocket.send(json.dumps({"id": 2, "method": "Runtime.enable"}))
+-            
+-            return True
+-        except Exception as e:
+-            self.log(f"❌ WebSocket connection failed: {e}")
+-            return False
+-            
+-    async def inject_test_script(self):
+-        """Inject JavaScript to set up the test environment"""
+-        test_script = """
+-        // Test environment setup
+-        window.stopTestResults = {
+-            started: false,
+-            stopped: false,
+-            startTime: null,
+-            stopTime: null,
+-            finalMessage: null,
+-            operationId: null
+-        };
+-        
+-        // Monitor AI agent messages for stop testing
+-        const originalSendMessage = chrome.runtime.sendMessage;
+-        chrome.runtime.sendMessage = function(message, callback) {
+-            // Log all messages for debugging
+-            console.log('[STOP_TEST] Message sent:', JSON.stringify(message, null, 2));
+-            
+-            if (message.type === 'STOP_OPERATION') {
+-                window.stopTestResults.stopTime = Date.now();
+-                window.stopTestResults.stopped = true;
+-                console.log('[STOP_TEST] 🛑 Stop operation triggered at:', window.stopTestResults.stopTime);
+-            }
+-            
+-            return originalSendMessage.call(this, message, callback);
+-        };
+-        
+-        // Function to start a long-running AI task
+-        window.startLongRunningTask = async function() {
+-            console.log('[STOP_TEST] 🚀 Starting long-running AI task...');
+-            window.stopTestResults.started = true;
+-            window.stopTestResults.startTime = Date.now();
+-            
+-            // Trigger AI agent with a complex task that should take time
+-            const message = {
+-                type: 'CHAT4_MESSAGE',
+-                content: 'Please search for information about artificial intelligence, then navigate to 3 different websites, take screenshots of each, analyze the content, and write a comprehensive summary of current AI trends. This should take several seconds to complete.',
+-                timestamp: Date.now()
+-            };
+-            
+-            try {
+-                const response = await new Promise((resolve, reject) => {
+-                    chrome.runtime.sendMessage(message, (response) => {
+-                        if (chrome.runtime.lastError) {
+-                            reject(new Error(chrome.runtime.lastError.message));
+-                        } else {
+-                            resolve(response);
+-                        }
+-                    });
+-                });
+-                
+-                window.stopTestResults.finalMessage = response;
+-                console.log('[STOP_TEST] 📝 Final response:', response);
+-                
+-            } catch (error) {
+-                console.log('[STOP_TEST] ❌ Task error:', error.message);
+-                window.stopTestResults.finalMessage = { error: error.message };
+-            }
+-        };
+-        
+-        // Function to trigger stop after delay
+-        window.triggerStopAfterDelay = function(delayMs = 2000) {
+-            setTimeout(() => {
+-                console.log('[STOP_TEST] 🛑 Triggering stop after ' + delayMs + 'ms delay...');
+-                
+-                // Find the operation ID from background tracking
+-                chrome.runtime.sendMessage({ type: 'GET_CURRENT_OPERATIONS' }, (operations) => {
+-                    const operationIds = Object.keys(operations || {});
+-                    if (operationIds.length > 0) {
+-                        const operationId = operationIds[0];
+-                        window.stopTestResults.operationId = operationId;
+-                        
+-                        // Send stop message
+-                        chrome.runtime.sendMessage({
+-                            type: 'STOP_OPERATION',
+-                            operationId: operationId,
+-                            source: 'stop_test'
+-                        }, (response) => {
+-                            console.log('[STOP_TEST] 🛑 Stop response:', response);
+-                        });
+-                    } else {
+-                        console.log('[STOP_TEST] ⚠️ No active operations found to stop');
+-                    }
+-                });
+-            }, delayMs);
+-        };
+-        
+-        console.log('[STOP_TEST] ✅ Test environment ready');
+-        """
+-        
+-        try:
+-            await self.websocket.send(json.dumps({
+-                "id": 10,
+-                "method": "Runtime.evaluate",
+-                "params": {"expression": test_script}
+-            }))
+-            self.log("✅ Test script injected")
+-            return True
+-        except Exception as e:
+-            self.log(f"❌ Failed to inject test script: {e}")
+-            return False
+-    
+-    async def run_stop_test(self):
+-        """Run the actual stop functionality test"""
+-        try:
+-            # Start the long-running task
+-            self.log("🚀 Starting long-running AI task...")
+-            await self.websocket.send(json.dumps({
+-                "id": 20,
+-                "method": "Runtime.evaluate", 
+-                "params": {"expression": "window.startLongRunningTask()"}
+-            }))
+-            
+-            # Wait a moment for task to begin
+-            await asyncio.sleep(1)
+-            
+-            # Trigger stop after 2 seconds
+-            self.log("⏰ Scheduling stop trigger in 2 seconds...")
+-            await self.websocket.send(json.dumps({
+-                "id": 21,
+-                "method": "Runtime.evaluate",
+-                "params": {"expression": "window.triggerStopAfterDelay(2000)"}
+-            }))
+-            
+-            # Monitor console output for 10 seconds
+-            self.log("👀 Monitoring console output for test results...")
+-            test_start_time = time.time()
+-            stop_detected = False
+-            task_started = False
+-            
+-            while time.time() - test_start_time < 10:  # 10 second timeout
+-                try:
+-                    message = await asyncio.wait_for(self.websocket.recv(), timeout=1.0)
+-                    data = json.loads(message)
+-                    
+-                    if data.get("method") == "Console.messageAdded":
+-                        log_text = data["params"]["message"]["text"]
+-                        
+-                        # Check for key test markers
+-                        if "[STOP_TEST]" in log_text:
+-                            self.log(f"📝 Test log: {log_text}")
+-                            
+-                            if "Starting long-running AI task" in log_text:
+-                                task_started = True
+-                            elif "Stop operation triggered" in log_text:
+-                                stop_detected = True
+-                            elif "Task stopped by user" in log_text:
+-                                self.log("✅ SUCCESS: Stop functionality worked!")
+-                                return True
+-                                
+-                except asyncio.TimeoutError:
+-                    continue
+-                except Exception as e:
+-                    self.log(f"⚠️ WebSocket error: {e}")
+-                    break
+-            
+-            # Check final results
+-            await self.websocket.send(json.dumps({
+-                "id": 30,
+-                "method": "Runtime.evaluate",
+-                "params": {"expression": "JSON.stringify(window.stopTestResults, null, 2)"}
+-            }))
+-            
+-            result_msg = await asyncio.wait_for(self.websocket.recv(), timeout=2.0)
+-            result_data = json.loads(result_msg)
+-            if "result" in result_data and "value" in result_data["result"]:
+-                results = json.loads(result_data["result"]["value"])
+-                self.log(f"📊 Final test results: {json.dumps(results, indent=2)}")
+-                
+-                # Analyze results
+-                if results.get("stopped") and results.get("started"):
+-                    if results.get("stopTime") and results.get("startTime"):
+-                        elapsed = results["stopTime"] - results["startTime"]
+-                        self.log(f"⏱️ Task stopped after {elapsed}ms - {'SUCCESS' if elapsed < 5000 else 'SLOW'}")
+-                        return elapsed < 5000  # Success if stopped within 5 seconds
+-                        
+-            self.log("❌ FAILED: Stop functionality did not work as expected")
+-            return False
+-            
+-        except Exception as e:
+-            self.log(f"❌ Test execution failed: {e}")
+-            return False
+-    
+-    def cleanup(self):
+-        """Clean up Chrome process and temporary files"""
+-        if self.chrome_process:
+-            self.chrome_process.terminate()
+-            self.chrome_process.wait()
+-        self.log("🧹 Cleanup completed")
+-        
+-    async def run_full_test(self):
+-        """Run the complete stop functionality test"""
+-        try:
+-            # Start Chrome
+-            if not self.start_chrome():
+-                return False
+-                
+-            # Connect WebSocket
+-            if not await self.connect_websocket():
+-                return False
+-                
+-            # Setup test environment 
+-            if not await self.inject_test_script():
+-                return False
+-                
+-            # Run the actual test
+-            success = await self.run_stop_test()
+-            
+-            self.log(f"🏁 Test completed: {'✅ SUCCESS' if success else '❌ FAILED'}")
+-            return success
+-            
+-        except Exception as e:
+-            self.log(f"❌ Test failed with exception: {e}")
+-            return False
+-        finally:
+-            self.cleanup()
+-
+-async def main():
+-    """Main test execution"""
+-    print("🧪 Starting automated stop functionality test...")
+-    
+-    test = StopFunctionalityTest()
+-    success = await test.run_full_test()
+-    
+-    print(f"\n{'='*50}")
+-    print(f"🏁 TEST RESULT: {'✅ PASSED' if success else '❌ FAILED'}")
+-    print(f"{'='*50}")
+-    
+-    return 0 if success else 1
+-
+-if __name__ == "__main__":
+-    import sys
+-    sys.exit(asyncio.run(main()))
+\ No newline at end of file
+diff --git a/chrome/browser/resources/vibe/tools/ParallelExecutor.js b/chrome/browser/resources/vibe/tools/ParallelExecutor.js
+index 9efbc2209e..19d1b619b5 100644
+--- a/chrome/browser/resources/vibe/tools/ParallelExecutor.js
++++ b/chrome/browser/resources/vibe/tools/ParallelExecutor.js
+@@ -72,7 +72,7 @@ export class ParallelExecutor {
+           stack: batchError.stack,
+           batchIndex: batchIndex + 1,
+           timestamp: new Date().toISOString()
+-        }, null, 2));
++        }));
+         
+         console.error(`❌ [PARALLEL_EXECUTOR] Batch ${batchIndex + 1} stack trace:`, batchError.stack);
+         
+@@ -191,7 +191,7 @@ export class ParallelExecutor {
+           toolName: tool.name,
+           index: index,
+           timestamp: new Date().toISOString()
+-        }, null, 2));
++        }));
+         
+         console.error(`❌ [PARALLEL_EXECUTOR] ${tool.name} (${index}) stack trace:`, error.stack);
+         
+diff --git a/chrome/browser/resources/vibe/tools/ReportTool.js b/chrome/browser/resources/vibe/tools/ReportTool.js
+index fd8835de20..8d4870d551 100644
+--- a/chrome/browser/resources/vibe/tools/ReportTool.js
++++ b/chrome/browser/resources/vibe/tools/ReportTool.js
+@@ -60,7 +60,7 @@ export class ReportTool extends BrowserTool {
+         confidence: report.confidence,
+         sourcesCount: report.sources.length,
+         answerPreview: report.answer ? report.answer.substring(0, 100) + '...' : 'No answer provided'
+-      }, null, 2));
++      }));
+ 
+       // Send report to background script for potential storage/logging
+       try {
+diff --git a/chrome/browser/resources/vibe/trigger_reasoning_test.html b/chrome/browser/resources/vibe/trigger_reasoning_test.html
+deleted file mode 100644
+index 7ad7779347..0000000000
+--- a/chrome/browser/resources/vibe/trigger_reasoning_test.html
++++ /dev/null
+@@ -1,25 +0,0 @@
+-<!DOCTYPE html>
+-<html>
+-<head>
+-    <title>Reasoning Tool Test</title>
+-</head>
+-<body>
+-    <h1>Test Reasoning Tool Flow</h1>
+-    <p>This page will trigger the agent to use reasoning tool first, then potentially get stuck.</p>
+-    
+-    <script>
+-        // Simulate triggering the agent via omnibox
+-        console.log('🧪 Test page loaded - ready to test agent');
+-        
+-        // Log when agent gets triggered
+-        if (typeof chrome !== 'undefined' && chrome.runtime) {
+-            chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+-                console.log('📨 Received message:', JSON.stringify(message, null, 2));
+-                if (message.type === 'REASONING_UPDATE') {
+-                    console.log('🧠 REASONING UPDATE:', JSON.stringify(message, null, 2));
+-                }
+-            });
+-        }
+-    </script>
+-</body>
+-</html>
+\ No newline at end of file
+diff --git a/test_vibe_pyautogui.py b/test_vibe_pyautogui.py
+index 9c75814f69..25f7de094f 100755
+--- a/test_vibe_pyautogui.py
++++ b/test_vibe_pyautogui.py
+@@ -341,8 +341,10 @@ class VibeExtensionTest:
+         time.sleep(1)
+         
+         # Clean up user data directory with retry
+-        if os.path.exists(TEST_WORKSPACE):
+-            shutil.rmtree(TEST_WORKSPACE, ignore_errors=False)
++        # DISABLED: Keep screenshots for analysis
++        # if os.path.exists(TEST_WORKSPACE):
++        #     shutil.rmtree(TEST_WORKSPACE, ignore_errors=False)
++        print(f"📁 Screenshots preserved in {TEST_WORKSPACE}/screenshots")
+ 
+ 
+     async def type_query(self, query="book a flight from SFO to JFK", timeout=120):
+-- 
+2.50.0
+

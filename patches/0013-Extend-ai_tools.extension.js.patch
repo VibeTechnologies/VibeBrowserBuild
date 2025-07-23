@@ -1,0 +1,399 @@
+From 0851d2f7c39cdee186f87fb804c3bc44d893144f Mon Sep 17 00:00:00 2001
+From: Den <2119348+dzianisv@users.noreply.github.com>
+Date: Tue, 22 Jul 2025 18:43:51 +0300
+Subject: [PATCH 13/91] Extend ai_tools.extension.js
+
+---
+ .../resources/vibe/ai_tools.extension.js      | 145 ++++++++++++++++--
+ chrome/browser/resources/vibe/content.js      |  44 ++++++
+ .../vibe/lib/browser/ai_config_manager.ts     |  65 +++++---
+ 3 files changed, 217 insertions(+), 37 deletions(-)
+
+diff --git a/chrome/browser/resources/vibe/ai_tools.extension.js b/chrome/browser/resources/vibe/ai_tools.extension.js
+index 34daff8c82..4b03880bd3 100644
+--- a/chrome/browser/resources/vibe/ai_tools.extension.js
++++ b/chrome/browser/resources/vibe/ai_tools.extension.js
+@@ -822,52 +822,163 @@ class GetPageContentTool extends BrowserTool {
+   }
+ }
+ 
+-// Tool to take a screenshot of the current page as a fallback mechanism
++// Tool to take a screenshot of the current page with cost-aware options
+ class TakeScreenshotTool extends BrowserTool {
+   constructor() {
+     super(
+       "take_screenshot",
+-      "Take a screenshot of the current page as a fallback when get_page_content and get_dom_structure tools fail",
++      "Take a JPEG screenshot (optionally resized & grayscale) for multimodal analysis. Use when text extraction fails or visual context is needed.",
+       z.object({
+         tabId: CommonToolArgs.tabId.optional().describe("Tab ID (optional - will use active tab if not specified)"),
+-        format: z.enum(["png", "jpeg"]).default("png").optional().describe("Image format for the screenshot")
++        maxWidth: z.number().min(320).max(2048).default(1024).optional()
++          .describe("Maximum width in pixels (will maintain aspect ratio)"),
++        grayscale: z.boolean().default(false).optional()
++          .describe("Convert to grayscale to reduce token usage when color isn't critical"),
++        quality: z.number().min(10).max(90).default(70).optional()
++          .describe("JPEG quality (10-90, higher = better quality but more tokens"),
++        detail: z.enum(["low", "high"]).default("low").optional()
++          .describe("Detail level - 'low' for basic layout, 'high' for detailed analysis")
+       })
+     );
++    
++    // Rate limiting
++    this.lastCaptureTime = 0;
++    this.MIN_CAPTURE_INTERVAL_MS = 500; // 2fps max to avoid Chrome throttling
+   }
+ 
+-  async call({ tabId, format = "png" }) {
++  /**
++   * Process an image with canvas for downscaling and grayscale conversion
++   * @param {string} dataUrl - Original image data URL
++   * @param {Object} options - Processing options
++   * @returns {Promise<string>} Processed image data URL
++   */
++  async processImage(dataUrl, { maxWidth = 1024, grayscale = false, quality = 70, detail = 'low' }) {
++    // For low detail mode, use fixed 768px on shortest side (single 85-token tile)
++    const targetSize = detail === 'low' ? 768 : maxWidth;
++    
++    return new Promise((resolve) => {
++      const img = new Image();
++      img.crossOrigin = 'anonymous';
++      
++      img.onload = () => {
++        // Calculate new dimensions maintaining aspect ratio
++        let width = img.width;
++        let height = img.height;
++        
++        if (detail === 'low') {
++          // For low detail, scale so shortest side is 768px
++          const scale = Math.min(1, targetSize / Math.min(width, height));
++          width = Math.round(width * scale);
++          height = Math.round(height * scale);
++        } else {
++          // For high detail, scale based on maxWidth
++          if (width > targetSize) {
++            const scale = targetSize / width;
++            height = Math.round(height * scale);
++            width = targetSize;
++          }
++        }
++        
++        // Create canvas for processing
++        const canvas = document.createElement('canvas');
++        canvas.width = width;
++        canvas.height = height;
++        const ctx = canvas.getContext('2d', { willReadFrequently: true });
++        
++        // Apply grayscale filter if requested
++        if (grayscale) {
++          ctx.filter = 'grayscale(100%)';
++        }
++        
++        // Draw image to canvas (this handles the scaling)
++        ctx.drawImage(img, 0, 0, width, height);
++        
++        // Convert to JPEG with specified quality (PNG if quality is 90+)
++        const mimeType = quality >= 90 ? 'image/png' : 'image/jpeg';
++        const processedQuality = quality >= 90 ? undefined : quality / 100;
++        
++        resolve(canvas.toDataURL(mimeType, processedQuality));
++      };
++      
++      img.onerror = () => resolve(dataUrl); // Fallback to original on error
++      img.src = dataUrl;
++    });
++  }
++
++  async call({ tabId, maxWidth, grayscale, quality, detail }) {
++    // Get default settings from config
++    let config = {};
++    try {
++      // Try to get config from window.vibeAIConfig if available (in extension context)
++      if (typeof window !== 'undefined' && window.vibeAIConfig) {
++        const configObj = window.vibeAIConfig.getConfig();
++        config = {
++          maxWidth: configObj.screenshotMaxWidth,
++          grayscale: configObj.screenshotGrayscale,
++          quality: configObj.screenshotQuality,
++          detail: configObj.screenshotDetail
++        };
++        console.log('[AI_AGENT] Using screenshot config from AIConfigManager:', config);
++      }
++    } catch (e) {
++      console.warn('[AI_AGENT] Could not load screenshot config, using defaults', e);
++    }
++    
++    // Apply any overrides from the tool call
++    const settings = {
++      maxWidth: maxWidth ?? config.maxWidth ?? 1024,
++      grayscale: grayscale ?? config.grayscale ?? false,
++      quality: quality ?? config.quality ?? 70,
++      detail: detail ?? config.detail ?? 'low'
++    };
++    
++    // Rate limit screenshot capture
++    const now = Date.now();
++    const timeSinceLastCapture = now - this.lastCaptureTime;
++    if (timeSinceLastCapture < this.MIN_CAPTURE_INTERVAL_MS) {
++      await new Promise(resolve => setTimeout(resolve, this.MIN_CAPTURE_INTERVAL_MS - timeSinceLastCapture));
++    }
++    
+     try {
+-      // Use provided tabId or get active tab
+       const targetTab = tabId ? { id: tabId } : await getCurrentActiveTab();
+-      const targetTabId = targetTab.id;
+-      
+-      console.log(`📸 Taking screenshot of tab ${targetTabId} (${targetTab.url || 'unknown URL'})`);
+       
+-      // Capture the visible tab using Chrome Extension API
++      // Capture the visible tab as JPEG (smaller than PNG)
+       const dataUrl = await chrome.tabs.captureVisibleTab(targetTab.windowId, {
+-        format: format,
+-        quality: format === "jpeg" ? 90 : undefined
++        format: 'jpeg',
++        quality: settings.quality / 100 // Chrome expects 0-1 for quality
+       });
+       
+       if (!dataUrl) {
+-        throw new Error('Failed to capture screenshot - no data returned');
++        throw new Error('Failed to capture tab');
+       }
+       
+-      console.log(`✅ Successfully captured screenshot of tab ${targetTabId}`);
++      // Process the image (resize + grayscale if needed)
++      const processedDataUrl = await this.processImage(dataUrl, settings);
+       
+-      // Return screenshot data URL - multimodal models can process this directly
+-      return dataUrl;
++      // Update last capture time
++      this.lastCaptureTime = Date.now();
++      
++      // Estimate token usage for logging (very rough estimate based on base64 size)
++      // OpenAI Vision: 85 base tokens + 170 per 512x512 tile (after resizing)
++      const base64Length = processedDataUrl.length - 'data:image/jpeg;base64,'.length;
++      const bytes = Math.ceil(base64Length * 0.75); // Base64 to bytes
++      const tiles = Math.ceil((bytes / (1024 * 1024)) * 4); // Very rough tiles estimate (1MB ~= 4 tiles)
++      const estimatedTokens = 85 + (170 * tiles);
++      
++      console.log(`[AI_AGENT] Captured screenshot: ${Math.round(bytes / 1024)}KB, ~${estimatedTokens} tokens, ${settings.detail} detail` +
++                 `, ${settings.grayscale ? 'grayscale' : 'color'}, ${settings.maxWidth}px max`);
++      
++      return processedDataUrl;
+       
+     } catch (error) {
+       console.error('[AI_AGENT] TakeScreenshotTool error:', error);
+-      
+       // Return error message instead of throwing to allow graceful fallback
+       return `Screenshot capture failed: ${error.message}. Consider using get_page_content or get_dom_structure as alternative methods`;
+     }
+   }
+ }
+ 
+-// Tool to click at specific pixel coordinates on the page
++// ... rest of the code remains the same ...
+ class ClickAtCoordinatesTool extends BrowserTool {
+   constructor() {
+     super(
+diff --git a/chrome/browser/resources/vibe/content.js b/chrome/browser/resources/vibe/content.js
+index 7eb6fb0a07..ba99a9b546 100644
+--- a/chrome/browser/resources/vibe/content.js
++++ b/chrome/browser/resources/vibe/content.js
+@@ -9,6 +9,50 @@ import * as contentExtractor from './lib/contentExtractor.js';
+ import * as readability from './lib/readability.js';
+ import * as buildDomTree from './lib/buildDomTree.js';
+ 
++// Deep querySelector that pierces Shadow DOM
++function querySelectorDeep(root, selector) {
++  const traverse = (node) => {
++    // Check if current node matches
++    if (node.matches && node.matches(selector)) return node;
++    
++    // Check all children and shadow roots
++    const children = [...(node.children || [])];
++    if (node.shadowRoot) {
++      children.push(node.shadowRoot);
++    }
++    
++    for (const child of children) {
++      const found = traverse(child);
++      if (found) return found;
++    }
++    return null;
++  };
++  return traverse(root);
++}
++
++// Deep querySelectorAll that pierces Shadow DOM
++function querySelectorAllDeep(root, selector) {
++  const results = [];
++  const traverse = (node) => {
++    // Check if current node matches
++    if (node.matches && node.matches(selector)) {
++      results.push(node);
++    }
++    
++    // Check all children and shadow roots
++    const children = [...(node.children || [])];
++    if (node.shadowRoot) {
++      children.push(node.shadowRoot);
++    }
++    
++    for (const child of children) {
++      traverse(child);
++    }
++  };
++  traverse(root);
++  return results;
++}
++
+ 
+ // Connection status tracking
+ let isConnected = true;
+diff --git a/chrome/browser/resources/vibe/lib/browser/ai_config_manager.ts b/chrome/browser/resources/vibe/lib/browser/ai_config_manager.ts
+index 4980b54839..ed241dbb6c 100644
+--- a/chrome/browser/resources/vibe/lib/browser/ai_config_manager.ts
++++ b/chrome/browser/resources/vibe/lib/browser/ai_config_manager.ts
+@@ -27,6 +27,9 @@ export interface AIAgentConfig {
+   defaultWaitTimeout: number; // for wait_for_element
+   screenshotFormat: 'png' | 'jpeg';
+   screenshotQuality: number; // 0-100 for jpeg
++  screenshotMaxWidth: number; // max width in pixels (default: 1024)
++  screenshotGrayscale: boolean; // convert to grayscale (default: false)
++  screenshotDetail: 'low' | 'high'; // detail level (default: 'high')
+ }
+ 
+ // Default configurations for each provider
+@@ -41,8 +44,11 @@ const DEFAULT_CONFIGS: Record<string, Partial<AIAgentConfig>> = {
+     maxIterations: 5,
+     verboseLogging: true,
+     defaultWaitTimeout: 5000,
+-    screenshotFormat: 'png',
+-    screenshotQuality: 90,
++    screenshotFormat: 'jpeg',
++    screenshotQuality: 70,
++    screenshotMaxWidth: 1024,
++    screenshotGrayscale: false,
++    screenshotDetail: 'high',
+   },
+   
+   openai: {
+@@ -55,8 +61,11 @@ const DEFAULT_CONFIGS: Record<string, Partial<AIAgentConfig>> = {
+     maxIterations: 5,
+     verboseLogging: true,
+     defaultWaitTimeout: 5000,
+-    screenshotFormat: 'png',
+-    screenshotQuality: 90,
++    screenshotFormat: 'jpeg',
++    screenshotQuality: 70,
++    screenshotMaxWidth: 1024,
++    screenshotGrayscale: false,
++    screenshotDetail: 'high',
+   },
+   
+   claude: {
+@@ -69,8 +78,11 @@ const DEFAULT_CONFIGS: Record<string, Partial<AIAgentConfig>> = {
+     maxIterations: 5,
+     verboseLogging: true,
+     defaultWaitTimeout: 5000,
+-    screenshotFormat: 'png',
+-    screenshotQuality: 90,
++    screenshotFormat: 'jpeg',
++    screenshotQuality: 70,
++    screenshotMaxWidth: 1024,
++    screenshotGrayscale: false,
++    screenshotDetail: 'high',
+   },
+   
+   gemini: {
+@@ -83,8 +95,11 @@ const DEFAULT_CONFIGS: Record<string, Partial<AIAgentConfig>> = {
+     maxIterations: 5,
+     verboseLogging: true,
+     defaultWaitTimeout: 5000,
+-    screenshotFormat: 'png',
+-    screenshotQuality: 90,
++    screenshotFormat: 'jpeg',
++    screenshotQuality: 70,
++    screenshotMaxWidth: 1024,
++    screenshotGrayscale: false,
++    screenshotDetail: 'high',
+   },
+   
+   local: {
+@@ -98,8 +113,11 @@ const DEFAULT_CONFIGS: Record<string, Partial<AIAgentConfig>> = {
+     maxIterations: 5,
+     verboseLogging: true,
+     defaultWaitTimeout: 5000,
+-    screenshotFormat: 'png',
+-    screenshotQuality: 90,
++    screenshotFormat: 'jpeg',
++    screenshotQuality: 70,
++    screenshotMaxWidth: 1024,
++    screenshotGrayscale: false,
++    screenshotDetail: 'high',
+   },
+ };
+ 
+@@ -184,7 +202,7 @@ export class AIConfigManager {
+     this.saveConfig(settings);
+   }
+   
+-  updateBrowserSettings(settings: Partial<Pick<AIAgentConfig, 'defaultWaitTimeout' | 'screenshotFormat' | 'screenshotQuality'>>): void {
++  updateBrowserSettings(settings: Partial<Pick<AIAgentConfig, 'defaultWaitTimeout' | 'screenshotFormat' | 'screenshotQuality' | 'screenshotMaxWidth' | 'screenshotGrayscale' | 'screenshotDetail'>>): void {
+     this.saveConfig(settings);
+   }
+   
+@@ -200,35 +218,42 @@ export class AIConfigManager {
+   validateConfig(config: Partial<AIAgentConfig>): string[] {
+     const errors: string[] = [];
+     
+-    if (config.provider && !(config.provider in DEFAULT_CONFIGS)) {
+-      errors.push(`Unsupported provider: ${config.provider}`);
++    if (config.provider && !['auto', 'openai', 'claude', 'gemini', 'local'].includes(config.provider)) {
++      errors.push('Invalid provider');
+     }
+     
+     if (config.temperature !== undefined && (config.temperature < 0 || config.temperature > 2)) {
+       errors.push('Temperature must be between 0 and 2');
+     }
+     
+-    if (config.maxTokens !== undefined && (config.maxTokens < 1 || config.maxTokens > 128000)) {
+-      errors.push('Max tokens must be between 1 and 128000');
++    if (config.maxTokens !== undefined && config.maxTokens < 1) {
++      errors.push('Max tokens must be at least 1');
+     }
+     
+     if (config.agentTimeout !== undefined && config.agentTimeout < 1000) {
+       errors.push('Agent timeout must be at least 1000ms');
+     }
+     
+-    if (config.maxIterations !== undefined && (config.maxIterations < 1 || config.maxIterations > 20)) {
+-      errors.push('Max iterations must be between 1 and 20');
++    if (config.maxIterations !== undefined && config.maxIterations < 1) {
++      errors.push('Max iterations must be at least 1');
+     }
+     
+     if (config.defaultWaitTimeout !== undefined && config.defaultWaitTimeout < 100) {
+       errors.push('Default wait timeout must be at least 100ms');
+     }
+     
+-    if (config.screenshotQuality !== undefined && (config.screenshotQuality < 1 || config.screenshotQuality > 100)) {
+-      errors.push('Screenshot quality must be between 1 and 100');
++    if (config.screenshotQuality !== undefined && (config.screenshotQuality < 10 || config.screenshotQuality > 100)) {
++      errors.push('Screenshot quality must be between 10 and 100');
++    }
++    
++    if (config.screenshotMaxWidth !== undefined && (config.screenshotMaxWidth < 320 || config.screenshotMaxWidth > 4096)) {
++      errors.push('Screenshot max width must be between 320 and 4096 pixels');
++    }
++    
++    if (config.screenshotDetail !== undefined && !['low', 'high'].includes(config.screenshotDetail)) {
++      errors.push('Screenshot detail must be either "low" or "high"');
+     }
+     
+-    // Provider-specific validations
+     if (config.provider === 'local' && config.baseUrl && !config.baseUrl.startsWith('http')) {
+       errors.push('Local LLM base URL must start with http:// or https://');
+     }
+-- 
+2.50.0
+

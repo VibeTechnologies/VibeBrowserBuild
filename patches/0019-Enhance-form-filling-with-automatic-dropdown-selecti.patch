@@ -1,0 +1,67 @@
+From 2d7a9abaed29c38a58781b128dacd9b418a52955 Mon Sep 17 00:00:00 2001
+From: Den <2119348+dzianisv@users.noreply.github.com>
+Date: Tue, 22 Jul 2025 23:06:42 +0300
+Subject: [PATCH 19/91] Enhance form filling with automatic dropdown selection
+
+- Auto-click dropdown suggestions after filling input fields (Google Flights compatibility)
+- Try multiple CSS selectors for suggestion detection
+- Add 500ms delay for dropdown appearance
+- Improve form filling robustness for flight booking workflows
+
+This fixes issues where agents fill airport fields but don't select from dropdown suggestions,
+causing form validation failures and incomplete bookings.
+---
+ chrome/browser/resources/vibe/content.js | 30 +++++++++++++++++++++++-
+ 1 file changed, 29 insertions(+), 1 deletion(-)
+
+diff --git a/chrome/browser/resources/vibe/content.js b/chrome/browser/resources/vibe/content.js
+index 5d4cea939e..8e74d7c409 100644
+--- a/chrome/browser/resources/vibe/content.js
++++ b/chrome/browser/resources/vibe/content.js
+@@ -326,7 +326,7 @@ function fillFlightForm(data) {
+ }
+ 
+ /**
+- * Fill input field and return page diff
++ * Fill input field, handle dropdown suggestions, and return page diff
+  */
+ function fillInput(selector, value) {
+   // Get the page state before the input
+@@ -363,6 +363,34 @@ function fillInput(selector, value) {
+     
+     console.log(`✅ Filled ${selector} with "${value}"`);
+     
++    // **NEW**: Auto-click dropdown suggestions after filling
++    setTimeout(() => {
++      // Try multiple selectors for dropdown suggestions (Google Flights specific)
++      const suggestionSelectors = [
++        'ul[role="listbox"] li:first-child',
++        '.gws-flights-form__suggestion li:first-child', 
++        '[data-suggestion]:first-child',
++        '[role="option"]:first-child',
++        '.suggestion-item:first-child',
++        '.autocomplete-suggestion:first-child'
++      ];
++      
++      let clicked = false;
++      for (const suggestionSelector of suggestionSelectors) {
++        const suggestion = document.querySelector(suggestionSelector);
++        if (suggestion && !clicked) {
++          suggestion.click();
++          console.log(`✅ Auto-clicked dropdown suggestion: ${suggestionSelector}`);
++          clicked = true;
++          break;
++        }
++      }
++      
++      if (!clicked) {
++        console.log(`ℹ️ No dropdown suggestions found to click after filling ${selector}`);
++      }
++    }, 500); // Wait 500ms for dropdown to appear
++    
+     // Get the page state after the input
+     const afterState = getPageStateSnapshot();
+     
+-- 
+2.50.0
+

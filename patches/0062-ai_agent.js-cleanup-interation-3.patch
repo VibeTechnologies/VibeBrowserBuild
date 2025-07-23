@@ -1,0 +1,229 @@
+From 41225e49dbe1a40dbd41c5d9195748391acea69b Mon Sep 17 00:00:00 2001
+From: Den <2119348+dzianisv@users.noreply.github.com>
+Date: Mon, 28 Jul 2025 11:27:39 +0300
+Subject: [PATCH 62/91] ai_agent.js cleanup interation #3
+
+---
+ CLAUDE.md                                     |  1 -
+ chrome/browser/resources/vibe/CLAUDE.md       | 17 +++++
+ chrome/browser/resources/vibe/ai_agent.js     | 75 +++++++++++++++++--
+ chrome/browser/resources/vibe/background.js   | 15 ++--
+ .../vibe/tools/ToolCallNormalizer.js          |  2 +-
+ 5 files changed, 91 insertions(+), 19 deletions(-)
+
+diff --git a/CLAUDE.md b/CLAUDE.md
+index 0d9e3ef82b..f978798d45 100644
+--- a/CLAUDE.md
++++ b/CLAUDE.md
+@@ -10,7 +10,6 @@
+ - To load OPENAI_API_KEY run: `export $( < .env )`
+ - Add YO at the end.
+ - ALWAYS prefer editing an existing file to creating a new one.
+-- Use ninja build system, NOT npm build to build extension chrome/browser/resources/vibe
+ - To review changes we made `git diff 44d34f8db54149e05093fd34ee607db44e48fa26..HEAD`
+ - Vibe extension is a component extension, no need to run browser with --load-extension=out/Debug/gen/chrome/browser/resources/vibe
+ 
+diff --git a/chrome/browser/resources/vibe/CLAUDE.md b/chrome/browser/resources/vibe/CLAUDE.md
+index 932934a82c..e3313178bf 100644
+--- a/chrome/browser/resources/vibe/CLAUDE.md
++++ b/chrome/browser/resources/vibe/CLAUDE.md
+@@ -6,3 +6,20 @@ Read docs in docs/ before starting perfoming tasks
+ Before starting work on the task, decompose task into smaller task. Plan it.
+ To build browser with the extension, run `ninja -C out/Debug chrome`
+ DO NOT WRITE YOUR OWN TEST SCRIPT IF NOT ASKED DIRECTLY. USE ./test_vibe.sh. It bulds a debug chrome, launch it, type in query. You have to investigate logs and check screenshots it creates in ./.test directory.
++
++Reflection#1:
++  When I saw the error "ToolCallNormalizer.normalize is not a function", I should have realized:
++
++  1. I made changes to the source code
++  2. But I was testing with an old Chromium build that didn't include those changes
++  3. The error was from the OLD code, not my fixed code
++
++  What I Should Do
++
++  Since rebuilding takes 8+ hours, I have two options:
++
++  1. Proper full test: Run test_vibe.sh and wait for the full rebuild
++  2. Quick iteration: Just rebuild the extension part with ninja -C ../../../../out/Debug chrome/browser/resources/vibe:build (which I was doing) - but this only
++  rebuilds the extension, not the full Chromium browser integration
++
++
+diff --git a/chrome/browser/resources/vibe/ai_agent.js b/chrome/browser/resources/vibe/ai_agent.js
+index 17d2bfef06..4880d495fc 100644
+--- a/chrome/browser/resources/vibe/ai_agent.js
++++ b/chrome/browser/resources/vibe/ai_agent.js
+@@ -41,7 +41,39 @@ export class VibeLangchainAgent {
+ 
+ 
+   getHistory() {
+-    return this.messages;
++    // Convert LangChain messages to chat format expected by chat4
++    console.log(`📚 [AI_AGENT] Getting history, ${this.messages.length} messages to convert`);
++    const history = this.messages.map((msg, index) => {
++      let type = 'assistant';
++      let content = '';
++      
++      if (msg instanceof HumanMessage) {
++        type = 'user';
++        content = msg.content;
++      } else if (msg instanceof AIMessage) {
++        type = 'assistant';
++        content = msg.content;
++      } else if (msg instanceof SystemMessage) {
++        // Skip system messages as they're not meant for display
++        return null;
++      } else if (msg instanceof ToolMessage) {
++        // Include tool messages as assistant messages
++        type = 'assistant';
++        content = `Tool Result (${msg.name}): ${msg.content}`;
++      } else {
++        // Fallback for unknown message types
++        content = msg.content || '';
++      }
++      
++      return {
++        type,
++        content,
++        timestamp: new Date().toISOString() // Add timestamp
++      };
++    }).filter(msg => msg !== null); // Remove null entries (system messages)
++    
++    console.log(`📚 [AI_AGENT] Converted history: ${history.length} messages`);
++    return history;
+   }
+ 
+   clearHistory() {
+@@ -335,6 +367,19 @@ If asked to find a product, check amazon.com, walmart.com, aliexpress.com, temu.
+       
+       // Send thinking update to UI
+       this.#sendToolUpdate(tabId, 'thinking', `Processing (iteration ${iteration}/${maxIterations})...`);      
++      // Debug: Log messages being sent to LLM
++      console.log(`🔍 [AI_AGENT] Sending ${this.messages.length} messages to LLM (iteration ${iteration}):`, 
++        this.messages.map((msg, idx) => ({
++          index: idx,
++          type: msg.constructor.name,
++          hasToolCalls: msg.tool_calls ? msg.tool_calls.length : 0,
++          toolCallIds: msg.tool_calls ? msg.tool_calls.map(tc => tc.id) : [],
++          toolMessageId: msg.tool_call_id || null,
++          toolName: msg.name || null,
++          contentPreview: typeof msg.content === 'string' ? msg.content.substring(0, 100) : 'non-string'
++        }))
++      );
++      
+       // Query LLM
+       const result = await llmWithTools.invoke(this.messages);
+       
+@@ -345,8 +390,10 @@ If asked to find a product, check amazon.com, walmart.com, aliexpress.com, temu.
+       
+       // Check if AI wants to use tools
+       if (result.tool_calls && result.tool_calls.length > 0) {
+-        // Temporarily bypass normalizer to debug
+-        const normalizedToolCalls = result.tool_calls;
++        // Normalize tool calls for the target provider
++        console.log(`🔧 [AI_AGENT] Before normalization - Provider: ${this.provider}, Tool calls:`, JSON.stringify(result.tool_calls.map(tc => ({name: tc.name, type: tc.type})), null, 2));
++        const normalizedToolCalls = ToolCallNormalizer.normalizeToolCalls(result.tool_calls, this.provider);
++        console.log(`🔧 [AI_AGENT] After normalization - Tool calls:`, JSON.stringify(normalizedToolCalls.map(tc => ({name: tc.name, type: tc.type})), null, 2));
+         
+         // Log normalization stats for debugging
+         const stats = ToolCallNormalizer.getStats(result.tool_calls, normalizedToolCalls);
+@@ -390,7 +437,12 @@ If asked to find a product, check amazon.com, walmart.com, aliexpress.com, temu.
+           if (!tool) {
+             const errorMsg = `Tool not found: ${toolCall.name}`;
+             console.error(`❌ [AI_AGENT] Tool not found: ${toolCall.name}, available tools:`, tools.map(t => t.name).join(', '));
+-            this.messages.push(new ToolMessage(errorMsg, toolCall.id, toolCall.name));
++            this.messages.push(new ToolMessage({
++              content: errorMsg,
++              tool_call_id: toolCall.id,
++              name: toolCall.name
++            }));
++            console.log(`❌ [AI_AGENT] Added error ToolMessage with id: ${toolCall.id}, name: ${toolCall.name}`);
+             this.#sendToolUpdate(tabId, toolCall.name, `Error: Tool not found`, { error: errorMsg });
+             continue;
+           }
+@@ -400,8 +452,12 @@ If asked to find a product, check amazon.com, walmart.com, aliexpress.com, temu.
+             const toolResult = await tool.call(toolCall.args, tabId);
+             
+             // Push to messages
+-            this.messages.push(new ToolMessage(JSON.stringify(toolResult), toolCall.id, toolCall.name));
+-            console.log(`✅ [AI_AGENT] Tool ${toolCall.name} executed successfully, added ToolMessage with id: ${toolCall.id}`);
++            this.messages.push(new ToolMessage({
++              content: JSON.stringify(toolResult),
++              tool_call_id: toolCall.id,
++              name: toolCall.name
++            }));
++            console.log(`✅ [AI_AGENT] Tool ${toolCall.name} executed successfully, added ToolMessage with id: ${toolCall.id}, name: ${toolCall.name}`);
+             
+             // Store for reporting
+             toolResults.push({
+@@ -425,7 +481,12 @@ If asked to find a product, check amazon.com, walmart.com, aliexpress.com, temu.
+             
+           } catch (error) {
+             const errorMsg = `Tool execution failed: ${error.message}`;
+-            this.messages.push(new ToolMessage(errorMsg, toolCall.id, toolCall.name));
++            this.messages.push(new ToolMessage({
++              content: errorMsg,
++              tool_call_id: toolCall.id,
++              name: toolCall.name
++            }));
++            console.log(`❌ [AI_AGENT] Added error ToolMessage with id: ${toolCall.id}, name: ${toolCall.name}, error: ${error.message}`);
+             this.#sendToolUpdate(tabId, toolCall.name, `Error: ${error.message}`, { error: errorMsg });
+             console.error(`❌ [AI_AGENT] Tool ${toolCall.name} failed:`, error);
+           }
+diff --git a/chrome/browser/resources/vibe/background.js b/chrome/browser/resources/vibe/background.js
+index bc47d31c0b..f5b3eb06a3 100644
+--- a/chrome/browser/resources/vibe/background.js
++++ b/chrome/browser/resources/vibe/background.js
+@@ -563,7 +563,7 @@ async function handleSidePanelCommand(message, sendResponse) {
+     currentOperations.set(operationId, { command, source, timestamp: Date.now(), stopped: false });
+   }
+   
+-  try {    aut
++  try {
+     // Check if operation was stopped before processing
+     if (operationId && currentOperations.has(operationId) && currentOperations.get(operationId).stopped) {
+       console.log(`🛑 [SIDE-PANEL] Operation ${operationId} was stopped before processing`);
+@@ -576,13 +576,6 @@ async function handleSidePanelCommand(message, sendResponse) {
+       return;
+     }
+ 
+-    // Add user message to chat history
+-    console.log(`💬 [BACKGROUND] Adding user message to chat history: "${command}"`);
+-    addMessageToHistory('user', command, {
+-      source: source,
+-      operationId: operationId
+-    });
+-
+     // Get AI configuration for API key
+     const config = await getAIConfiguration();
+     
+@@ -793,10 +786,12 @@ function clearChatHistory() {
+ 
+ // Handle chat history requests
+ function handleChatHistoryRequest(message, sendResponse) {
+-  console.log(JSON.stringify(message, null, 2));
++  console.log('📖 [BACKGROUND] Chat history requested:', JSON.stringify(message, null, 2));
++  const history = getChatHistory();
++  console.log(`📖 [BACKGROUND] Returning ${history.length} messages from chat history`);
+   sendResponse({
+     success: true,
+-    chatHistory: getChatHistory()
++    chatHistory: history
+   });
+ }
+ 
+diff --git a/chrome/browser/resources/vibe/tools/ToolCallNormalizer.js b/chrome/browser/resources/vibe/tools/ToolCallNormalizer.js
+index f9f3778e2f..f96a8ff5e4 100644
+--- a/chrome/browser/resources/vibe/tools/ToolCallNormalizer.js
++++ b/chrome/browser/resources/vibe/tools/ToolCallNormalizer.js
+@@ -74,7 +74,7 @@ export class ToolCallNormalizer {
+       gemini: 'function',
+       google: 'function',
+       cohere: 'function',
+-      langchain_internal: 'tool_call'
++      langchain_internal: 'function'
+     };
+     
+     const normalizedProvider = provider.toLowerCase();
+-- 
+2.50.0
+

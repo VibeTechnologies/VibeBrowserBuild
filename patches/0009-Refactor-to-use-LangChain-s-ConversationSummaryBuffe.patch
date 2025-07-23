@@ -1,7 +1,7 @@
 From ce3c2b5258ccb713c5c875b31220c66416bb6b2c Mon Sep 17 00:00:00 2001
 From: Den <2119348+dzianisv@users.noreply.github.com>
 Date: Tue, 22 Jul 2025 13:09:57 +0300
-Subject: [PATCH 09/10] Refactor to use LangChain's
+Subject: [PATCH 09/91] Refactor to use LangChain's
  ConversationSummaryBufferMemory
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8

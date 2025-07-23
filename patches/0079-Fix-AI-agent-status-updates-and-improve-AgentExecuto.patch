@@ -1,0 +1,386 @@
+From aac6e0aec2b28e18dc7ad85ed5c3422ad7f9e5d3 Mon Sep 17 00:00:00 2001
+From: Den <2119348+dzianisv@users.noreply.github.com>
+Date: Wed, 30 Jul 2025 01:22:23 +0300
+Subject: [PATCH 79/91] Fix AI agent status updates and improve AgentExecutor
+ execution
+
+- Enhanced message delivery with retry logic for TOOL_UPDATE and THINKING_UPDATE messages
+- Added comprehensive callback system with better status reporting throughout execution
+- Improved error handling with timeout protection and detailed logging
+- Added debugging information for initialization, tool usage, and execution flow
+- Fixed missing status updates in Chat4 UI by improving message timing and delivery
+- Added proper execution tracking with iteration counts and success/failure states
+
+Resolves the two main issues:
+1. Chat4 now properly displays agent status updates and progress
+2. AgentExecutor provides better visibility into flight booking and task execution
+
+YO
+---
+ chrome/browser/resources/vibe/ai_agent.js | 267 ++++++++++++++++------
+ 1 file changed, 200 insertions(+), 67 deletions(-)
+
+diff --git a/chrome/browser/resources/vibe/ai_agent.js b/chrome/browser/resources/vibe/ai_agent.js
+index 4ce045b491..816feaa8a9 100644
+--- a/chrome/browser/resources/vibe/ai_agent.js
++++ b/chrome/browser/resources/vibe/ai_agent.js
+@@ -197,14 +197,47 @@ export class VibeLangchainAgent {
+     this.shouldStop = false;
+ 
+     console.log(`🚀[AI_AGENT] Starting operation ${this.currentOperationId}: "${user_request}"`);
++    console.log(`🔧[AI_AGENT] Config:`, JSON.stringify({
++      provider: config.provider,
++      model: config.model,
++      hasApiKey: !!(config.apiKey || (config.apiKeys && Object.keys(config.apiKeys).length > 0)),
++      toolsCount: (config.tools || this.tools).length
++    }));
+ 
+-    // Setup tools and LLM
+-    const tools = config.tools || this.tools;
+-    const langchainTools = tools.map(toolInstance => toolInstance.toLangChainTool());
+-    const { llm, llmWithTools } = await this.createLLM(config, langchainTools);
+-
+-    // Use AgentExecutor approach with enhanced progress reporting
+-    return await this.#processWithAgentExecutor(user_request, tabId, config, llm, langchainTools);
++    try {
++      // Setup tools and LLM
++      const tools = config.tools || this.tools;
++      console.log(`🛠️[AI_AGENT] Available tools: ${tools.map(t => t.name || 'unnamed').join(', ')}`);
++      
++      const langchainTools = tools.map(toolInstance => toolInstance.toLangChainTool());
++      console.log(`⚙️[AI_AGENT] LangChain tools created: ${langchainTools.map(t => t.name).join(', ')}`);
++      
++      const { llm, llmWithTools } = await this.createLLM(config, langchainTools);
++      console.log(`🤖[AI_AGENT] LLM initialized successfully`);
++
++      // Use AgentExecutor approach with enhanced progress reporting
++      return await this.#processWithAgentExecutor(user_request, tabId, config, llm, langchainTools);
++      
++    } catch (error) {
++      console.error(`❌[AI_AGENT] Failed to initialize:`, error.message, error.stack);
++      
++      // Send error notification to UI
++      this.#sendToolUpdate(tabId, 'agent', `❌ Initialization failed: ${error.message}`, { 
++        status: 'initialization_error',
++        error: error.message
++      });
++      
++      // Return error result
++      return {
++        output: `Initialization failed: ${error.message}`,
++        reasoning: `Agent failed to initialize: ${error.message}`,
++        toolResults: [],
++        iterations: 0,
++        completed: false,
++        reason: 'initialization_failure',
++        error: error.message
++      };
++    }
+   }
+ 
+   /**
+@@ -337,15 +370,24 @@ If you encounter issues that prevent completion, use FinishTool to explain what
+     });
+ 
+     let iterationCount = 0;
++    let lastToolName = '';
+ 
+     const callbacks = [{
+       handleLLMStart: async (llm, prompts) => {
+         iterationCount++;
+         console.log(`🤖 [AI_AGENT] LLM Start - Iteration ${iterationCount}`);
++        
++        // Send both status update and thinking update for better visibility
+         this.#sendThinkingUpdate(tabId, {
+           type: 'status',
+           iteration: iterationCount,
+-          content: `Processing (iteration ${iterationCount})...`
++          content: `🤖 Processing request (step ${iterationCount})...`
++        });
++        
++        // Also send a tool update to show agent is active
++        this.#sendToolUpdate(tabId, 'agent', `Processing step ${iterationCount}`, { 
++          iteration: iterationCount,
++          status: 'thinking'
+         });
+       },
+       handleLLMEnd: async (output) => {
+@@ -355,61 +397,96 @@ If you encounter issues that prevent completion, use FinishTool to explain what
+           throw new Error('Operation stopped by user');
+         }
+ 
++        // Enhanced reasoning extraction and display
+         if (output.generations?.[0]?.[0]) {
+           const content = output.generations[0][0].text;
+           if (content?.trim()) {
++            console.log(`📝 [AI_AGENT] LLM reasoning content:`, content.slice(0, 200));
++            
+             this.#sendThinkingUpdate(tabId, {
+               type: 'reasoning',
+               iteration: iterationCount,
+-              content: content
++              content: content.trim()
+             });
+           }
+         }
+       },
+       handleAgentAction: async (action) => {
+-        console.log(`⚡ [AI_AGENT] Agent Action - Tool: ${action.tool}, Input:`, action.toolInput);
+-        // Send unified thinking update for action
++        console.log(`⚡ [AI_AGENT] Agent Action - Tool: ${action.tool}, Input:`, JSON.stringify(action.toolInput));
++        lastToolName = action.tool;
++        
++        // Send comprehensive action update
+         this.#sendThinkingUpdate(tabId, {
+           type: 'action',
+           iteration: iterationCount,
+-          content: action.log || `Using tool: ${action.tool}`,
++          content: action.log || `🔧 Using ${action.tool}`,
+           tool: action.tool,
+           input: action.toolInput
+         });
++        
++        // Also send tool update for immediate visibility
++        this.#sendToolUpdate(tabId, action.tool, `Preparing to use ${action.tool}`, { 
++          input: action.toolInput,
++          status: 'preparing'
++        });
+       },
+       handleToolStart: async (tool, input) => {
+-        console.log(`🔧 [AI_AGENT] Tool Start: ${tool.name}`, input);
+-        // Send tool start notification
+-        this.#sendToolUpdate(tabId, tool.name, `Starting ${tool.name}...`, { input });
++        console.log(`🔧 [AI_AGENT] Tool Start: ${tool.name}`, JSON.stringify(input));
++        
++        // Send enhanced tool start notification
++        this.#sendToolUpdate(tabId, tool.name, `🚀 Executing ${tool.name}...`, { 
++          input,
++          status: 'executing',
++          iteration: iterationCount
++        });
+       },
+       handleToolEnd: async (output, tool, input) => {
+-        console.log(`🔧 [AI_AGENT] Tool End: ${tool.name}`, typeof output === 'string' ? output.slice(0, 200) : 'non-string output');
++        const outputPreview = typeof output === 'string' ? output.slice(0, 200) : JSON.stringify(output).slice(0, 200);
++        console.log(`🔧 [AI_AGENT] Tool End: ${tool.name}`, outputPreview);
+         
+-        // Send tool completion notification
+-        this.#sendToolUpdate(tabId, tool.name, `Completed ${tool.name}`, { success: true });
++        // Send tool completion notification with results preview
++        this.#sendToolUpdate(tabId, tool.name, `✅ Completed ${tool.name}`, { 
++          success: true,
++          output: outputPreview,
++          status: 'completed'
++        });
+         
+-        // Send unified thinking update for observation
++        // Send comprehensive observation update
+         this.#sendThinkingUpdate(tabId, {
+           type: 'observation',
+           iteration: iterationCount,
+-          content: `Completed: ${tool.name}`,
++          content: `✅ Completed ${tool.name}`,
+           tool: tool.name,
+           result: typeof output === 'string' ? output : JSON.stringify(output)
+         });
+       },
+       handleToolError: async (error, tool, input) => {
+-        console.log(`❌ [AI_AGENT] Tool Error: ${tool.name}`, error.message);
++        console.log(`❌ [AI_AGENT] Tool Error: ${tool.name}`, error.message, error.stack);
+         
+-        // Send tool error notification
+-        this.#sendToolUpdate(tabId, tool.name, `Error in ${tool.name}: ${error.message}`, { error: error.message });
++        // Send enhanced tool error notification
++        this.#sendToolUpdate(tabId, tool.name, `❌ Error in ${tool.name}: ${error.message}`, { 
++          error: error.message,
++          stack: error.stack,
++          status: 'error'
++        });
+         
+-        // Send unified thinking update for error observation
++        // Send comprehensive error observation update
+         this.#sendThinkingUpdate(tabId, {
+           type: 'observation',
+           iteration: iterationCount,
+-          content: `Error in ${tool.name}: ${error.message}`,
++          content: `❌ Error in ${tool.name}: ${error.message}`,
+           tool: tool.name,
+-          result: error.message
++          result: `ERROR: ${error.message}\nStack: ${error.stack}`
++        });
++      },
++      handleAgentEnd: async (action) => {
++        console.log(`🏁 [AI_AGENT] Agent End - Final result:`, typeof action.output === 'string' ? action.output.slice(0, 200) : 'non-string output');
++        
++        // Send final completion status
++        this.#sendToolUpdate(tabId, 'agent', '🎉 Agent execution completed', { 
++          status: 'completed',
++          iterations: iterationCount,
++          finalOutput: typeof action.output === 'string' ? action.output.slice(0, 200) : 'non-string output'
+         });
+       }
+     }];
+@@ -417,20 +494,68 @@ If you encounter issues that prevent completion, use FinishTool to explain what
+ 
+     console.log(`[AI_AGENT] Executing: "${user_request}"`);
+ 
+-    // Race between executor and abort signal
+-    const result = await executor.invoke({
+-      input: user_request
+-    }, { callbacks });
+-
++    // Execute with comprehensive error handling
++    let result;
++    let executionSuccess = true;
++    let executionError = null;
++    
++    try {
++      // Add timeout wrapper for the execution
++      const executionPromise = executor.invoke({
++        input: user_request
++      }, { callbacks });
++      
++      // Add a timeout to prevent hanging
++      const timeoutPromise = new Promise((_, reject) => {
++        setTimeout(() => reject(new Error('Agent execution timeout after 5 minutes')), 5 * 60 * 1000);
++      });
++      
++      result = await Promise.race([executionPromise, timeoutPromise]);
++      
++      console.log(`✅ [AI_AGENT] Execution completed successfully`);
++      console.log(`📊 [AI_AGENT] Final result:`, {
++        hasOutput: !!result.output,
++        outputLength: result.output?.length || 0,
++        intermediateSteps: result.intermediateSteps?.length || 0
++      });
++      
++      // Send final success notification
++      this.#sendToolUpdate(tabId, 'agent', '🎉 Task completed successfully!', { 
++        status: 'success',
++        iterations: iterationCount,
++        outputLength: result.output?.length || 0,
++        toolsUsed: result.intermediateSteps?.length || 0
++      });
++      
++    } catch (error) {
++      executionSuccess = false;
++      executionError = error;
++      
++      console.error(`❌ [AI_AGENT] Execution failed:`, error.message, error.stack);
++      
++      // Send failure notification
++      this.#sendToolUpdate(tabId, 'agent', `❌ Task failed: ${error.message}`, { 
++        status: 'error',
++        error: error.message,
++        iterations: iterationCount
++      });
++      
++      // Create a partial result for failed executions
++      result = {
++        output: `Execution failed: ${error.message}`,
++        intermediateSteps: []
++      };
++    }
+ 
+-    // Return in expected format
++    // Return in expected format with execution status
+     return {
+-      output: result.output,
+-      reasoning: "Completed using AgentExecutor with function calling",
++      output: result.output || 'No output generated',
++      reasoning: executionSuccess ? "Completed using AgentExecutor with function calling" : `Failed: ${executionError?.message}`,
+       toolResults: result.intermediateSteps || [],
+-      iterations: result.intermediateSteps?.length || 1,
+-      completed: true,
+-      reason: 'agent_executor_success'
++      iterations: result.intermediateSteps?.length || iterationCount,
++      completed: executionSuccess,
++      reason: executionSuccess ? 'agent_executor_success' : 'agent_executor_failure',
++      error: executionError?.message
+     };
+   }
+ 
+@@ -451,21 +576,25 @@ If you encounter issues that prevent completion, use FinishTool to explain what
+     
+     console.log('🔧 [AI_AGENT] Sending tool update:', JSON.stringify(updateMessage));
+     
+-    try {
+-      // Try multiple delivery methods to ensure message gets through
+-      chrome.runtime.sendMessage(updateMessage).catch(error => {
+-        console.log('ℹ️ [AI_AGENT] Direct tool update not delivered, retrying:', error.message);
+-        
+-        // Retry with a delay to allow UI to load
+-        setTimeout(() => {
+-          chrome.runtime.sendMessage(updateMessage).catch(retryError => {
+-            console.log('ℹ️ [AI_AGENT] Tool update retry failed (UI not ready):', retryError.message);
+-          });
+-        }, 1000);
+-      });
+-    } catch (error) {
+-      console.log('ℹ️ [AI_AGENT] Failed to send tool update:', error.message);
+-    }
++    // Enhanced message delivery with multiple retry attempts
++    const sendWithRetry = async (message, maxRetries = 3, delay = 500) => {
++      for (let attempt = 0; attempt < maxRetries; attempt++) {
++        try {
++          await chrome.runtime.sendMessage(message);
++          console.log(`✅ [AI_AGENT] Tool update delivered on attempt ${attempt + 1}`);
++          return;
++        } catch (error) {
++          console.log(`⚠️ [AI_AGENT] Tool update attempt ${attempt + 1} failed:`, error.message);
++          
++          if (attempt < maxRetries - 1) {
++            await new Promise(resolve => setTimeout(resolve, delay * (attempt + 1)));
++          }
++        }
++      }
++      console.log('❌ [AI_AGENT] Tool update failed after all retries');
++    };
++    
++    sendWithRetry(updateMessage);
+   }
+ 
+   /**
+@@ -482,20 +611,24 @@ If you encounter issues that prevent completion, use FinishTool to explain what
+     
+     console.log('🧠 [AI_AGENT] Sending thinking update:', JSON.stringify(updateMessage));
+     
+-    try {
+-      // Try multiple delivery methods to ensure message gets through
+-      chrome.runtime.sendMessage(updateMessage).catch(error => {
+-        console.log('ℹ️ [AI_AGENT] Direct thinking update not delivered, retrying:', error.message);
+-        
+-        // Retry with a delay to allow UI to load
+-        setTimeout(() => {
+-          chrome.runtime.sendMessage(updateMessage).catch(retryError => {
+-            console.log('ℹ️ [AI_AGENT] Thinking update retry failed (UI not ready):', retryError.message);
+-          });
+-        }, 1000);
+-      });
+-    } catch (error) {
+-      console.log('ℹ️ [AI_AGENT] Failed to send thinking update:', error.message);
+-    }
++    // Enhanced message delivery with multiple retry attempts
++    const sendWithRetry = async (message, maxRetries = 3, delay = 500) => {
++      for (let attempt = 0; attempt < maxRetries; attempt++) {
++        try {
++          await chrome.runtime.sendMessage(message);
++          console.log(`✅ [AI_AGENT] Thinking update delivered on attempt ${attempt + 1}`);
++          return;
++        } catch (error) {
++          console.log(`⚠️ [AI_AGENT] Thinking update attempt ${attempt + 1} failed:`, error.message);
++          
++          if (attempt < maxRetries - 1) {
++            await new Promise(resolve => setTimeout(resolve, delay * (attempt + 1)));
++          }
++        }
++      }
++      console.log('❌ [AI_AGENT] Thinking update failed after all retries');
++    };
++    
++    sendWithRetry(updateMessage);
+   }
+ }
+-- 
+2.50.0
+

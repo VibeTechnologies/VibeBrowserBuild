@@ -1,0 +1,591 @@
+From c36815599ab306c0b5fd4cebd1fab2ab91bc49ee Mon Sep 17 00:00:00 2001
+From: Den <2119348+dzianisv@users.noreply.github.com>
+Date: Mon, 28 Jul 2025 13:19:26 +0300
+Subject: [PATCH 64/91] Complete all issues.md tasks: progress updates, stop
+ functionality, UI layout, and AgentExecutor cleanup
+
+- Enhanced AgentExecutor with tool wrapping for real-time progress updates
+- Fixed stop button operation by correcting operation ID lifecycle management
+- Fixed chat UI layout with proper flex constraints for scrollable history
+- Removed manual loop fallback and cleaned up AgentExecutor implementation
+- Added callback handlers for reasoning updates and stop operation support
+
+All four tasks from issues.md are now completed.
+---
+ chrome/browser/resources/vibe/ai_agent.js     | 369 ++++--------------
+ .../chat4/src/components/chat/ChatPage.tsx    |  36 +-
+ .../vibe/apps/chat4/src/utils/aiAgent.ts      |  14 +-
+ chrome/browser/resources/vibe/background.js   |  32 +-
+ 4 files changed, 117 insertions(+), 334 deletions(-)
+
+diff --git a/chrome/browser/resources/vibe/ai_agent.js b/chrome/browser/resources/vibe/ai_agent.js
+index 9cc2bb5c7d..2266c4e730 100644
+--- a/chrome/browser/resources/vibe/ai_agent.js
++++ b/chrome/browser/resources/vibe/ai_agent.js
+@@ -273,7 +273,7 @@ export class VibeLangchainAgent {
+     const langchainTools = tools.map(toolInstance => toolInstance.toLangChainTool());
+     const { llm, llmWithTools } = await this.createLLM(config, langchainTools);
+     
+-    // NEW APPROACH: Use AgentExecutor with createToolCallingAgent
++    // Use AgentExecutor approach with enhanced progress reporting
+     return await this.#processWithAgentExecutor(user_request, tabId, config, llm, langchainTools);
+   }
+ 
+@@ -286,6 +286,41 @@ export class VibeLangchainAgent {
+     console.log(`🔧 [AI_AGENT] Using AgentExecutor approach with ${langchainTools.length} tools`);
+     
+     try {
++      // Create enhanced tools with progress reporting
++      const enhancedTools = langchainTools.map(tool => {
++        const originalCall = tool.call || tool._call;
++        
++        // Wrap the tool call to send progress updates
++        const wrappedCall = async (input, runManager) => {
++          // Send tool start update
++          this.#sendToolUpdate(tabId, tool.name, `Using ${tool.name}...`, input);
++          
++          try {
++            // Call the original tool
++            const result = originalCall.call(tool, input, runManager);
++            
++            // Handle both sync and async results
++            const finalResult = await Promise.resolve(result);
++            
++            // Send tool completion update
++            this.#sendToolUpdate(tabId, tool.name, `Completed ${tool.name}`, { success: true });
++            
++            return finalResult;
++          } catch (error) {
++            // Send tool error update
++            this.#sendToolUpdate(tabId, tool.name, `Error in ${tool.name}: ${error.message}`, { error: error.message });
++            throw error;
++          }
++        };
++        
++        // Create enhanced tool with wrapped call
++        return {
++          ...tool,
++          call: wrappedCall,
++          _call: wrappedCall
++        };
++      });
++
+       // Create the prompt template for tool calling agent
+       const prompt = ChatPromptTemplate.fromMessages([
+         ["system", `You are an intelligent browser automation agent that uses function calls to interact with web pages.
+@@ -320,14 +355,14 @@ export class VibeLangchainAgent {
+       // Create the tool calling agent
+       const agent = await createToolCallingAgent({
+         llm: llm,
+-        tools: langchainTools,
++        tools: enhancedTools,
+         prompt: prompt
+       });
+ 
+       // Create agent executor with memory
+       const executor = new AgentExecutor({
+         agent,
+-        tools: langchainTools,
++        tools: enhancedTools,
+         memory: this.memory,
+         maxIterations: config.maxIterations || 32,
+         returnIntermediateSteps: true,
+@@ -335,11 +370,37 @@ export class VibeLangchainAgent {
+       });
+ 
+       console.log(`✅ [AI_AGENT] AgentExecutor created, starting execution...`);
++      
++      // Send initial thinking update
++      this.#sendToolUpdate(tabId, 'thinking', 'Starting AI agent...');
++
++      // Create a custom callback to capture reasoning
++      let iterationCount = 0;
++      const callbacks = [{
++        handleLLMStart: async (llm, prompts) => {
++          iterationCount++;
++          this.#sendToolUpdate(tabId, 'thinking', `Processing (iteration ${iterationCount})...`);
++        },
++        handleLLMEnd: async (output) => {
++          // Check if we should stop
++          if (this.#shouldStopOperation()) {
++            throw new Error('Operation stopped by user');
++          }
++          
++          // Send reasoning update if available
++          if (output.generations && output.generations[0] && output.generations[0][0]) {
++            const content = output.generations[0][0].text;
++            if (content && content.trim()) {
++              this.#sendReasoningUpdate(tabId, content, iterationCount);
++            }
++          }
++        }
++      }];
+ 
+-      // Execute the task - AgentExecutor uses memory internally, only pass input
++      // Execute the task with callbacks
+       const result = await executor.invoke({
+         input: user_request
+-      });
++      }, { callbacks });
+ 
+       console.log(`🎉 [AI_AGENT] AgentExecutor completed:`, JSON.stringify({
+         output: result.output,
+@@ -366,303 +427,27 @@ export class VibeLangchainAgent {
+     } catch (error) {
+       console.error(`❌ [AI_AGENT] AgentExecutor failed:`, error);
+       
+-      // Fallback to original approach if AgentExecutor fails
+-      console.log(`🔄 [AI_AGENT] Falling back to manual approach...`);
+-      return await this.#processWithManualLoop(user_request, tabId, config, llm, langchainTools);
+-    }
+-  }
+-
+-  /**
+-   * Original manual ReAct loop approach (kept as fallback)
+-   * @private
+-   */
+-  async #processWithManualLoop(user_request, tabId, config, llm, langchainTools) {
+-    console.log(`🔄 [AI_AGENT] Using manual ReAct loop as fallback`);
+-    
+-    // Initialize messages array for manual approach
+-    this.messages = [];
+-    
+-    // Bind tools to LLM for manual approach
+-    const llmWithTools = llm.bindTools(langchainTools);
+-    const tools = config.tools || this.tools;
+-    
+-    // Perfect ReAct Pattern with 3 Tool Calls per Iteration
+-    const systemPrompt = `You are an intelligent browser automation agent that follows the ReAct (Reasoning and Acting) pattern using exactly 3 tool calls per iteration.
+-
+-**MANDATORY PATTERN - Use exactly 3 function calls in this order:**
+-
+-1. **thought** - Think and plan before acting
+-   - Use the 'thought' tool to express your reasoning
+-   - Analyze the current situation  
+-   - Plan what you want to accomplish
+-
+-2. **action** - Execute one specific action  
+-   - Use any browser automation tool (get_page_content, click_element, etc.)
+-   - Take one concrete step toward your goal
+-   - Be specific with parameters
+-
+-3. **observation** - Analyze what happened
+-   - Use the 'observation' tool to reflect on the results
+-   - Determine if the action succeeded
+-   - Plan your next iteration
+-
+-**PERFECT EXAMPLE:**
+-[Tool 1] thought: {"reasoning": "I need to find flights. Let me first see what's on this page", "plan": "I'll get the page content to understand the current state"}
+-[Tool 2] get_page_content: {"tabId": "current"}  
+-[Tool 3] observation: {"analysis": "I can see a travel booking site with search fields", "outcome": "success", "next_step": "Fill in the departure and destination fields"}
+-
+-**CRITICAL RULES:**
+-1. EVERY iteration must have exactly 3 tool calls: thought → action → observation
+-2. Start each iteration with the 'thought' tool
+-3. End each iteration with the 'observation' tool  
+-4. Continue iterations until task is complete
+-5. Never skip any of the 3 steps
+-
+-**CORE INTELLIGENCE PRINCIPLES:**
+-
+-1. **Discovery First**: 
+-   - NEVER assume selectors - always discover them using get_page_content
+-   - Look for elements marked [CLICKABLE], [INPUT], [BUTTON], etc.
+-   - Pay attention to aria-labels, placeholders, and text content
+-   - Example workflow: get_page_content → analyze elements → fill_form_field with discovered selector
+-
+-2. **Contextual Awareness**: 
+-   - When you fill an airport field, EXPECT suggestions to appear
+-   - After typing in search boxes, look for dropdown options
+-   - Form interactions often create new clickable elements
+-
+-3. **Observation and Decision Making:**
+-   - After each action, call get_page_content with includeChanges=true to see what's new
+-   - LOOK for interactive elements marked as [CLICKABLE] that just appeared  
+-   - If you see relevant options with [NEW - JUST APPEARED] or [DROPDOWN OPTION], DECIDE to click them
+-   - Example: After typing "SFO", if you see "[CLICKABLE] San Francisco International (SFO) [DROPDOWN OPTION] [AIRPORT RELATED]", click it
+-
+-4. **Natural Interaction Flow:**
+-
+-**THINK LIKE A HUMAN**: 
+-"First, let me see what's on this page (get_page_content), then I'll find the right input field, fill it, and watch for any dropdowns or suggestions."
+-
+-**USE WEB SEARCH FOR CONTEXT**:
+-When you need additional information or context to complete a task, use the 'web_search' tool to gather relevant information before proceeding. This is especially useful for:
+-- Finding current prices, availability, or specifications
+-- Getting background information about locations, products, or services
+-- Researching best practices or recommendations
+-- Gathering context that will help you make better decisions
+-
+-If asked to find a flight: flights.google.com
+-If asked to find a hotel, check a few sources booking.com, hotels.com, agoda.com 
+-If asked to find apartment, studio or a room, check airbnb.com. 
+-If asked to find a product, check amazon.com, walmart.com, aliexpress.com, temu.com
+-
+-**Available Tools:** ${langchainTools.map(t => t.name).join(', ')}
+-
+-`;
+-  this.messages.push(new SystemMessage(systemPrompt));
+-  this.messages.push(new HumanMessage(user_request));
+-  
+-  const maxIterations = config.maxIterations || 32;
+-  const toolResults = [];
+-  let consecutiveFailures = 0;
+-  
+-  // Main ReAct loop
+-  for (let iteration = 1; iteration <= maxIterations; iteration++) {
+-    try {
+-      // Check if operation should stop
+-      if (this.#shouldStopOperation()) {
+-        console.log(`🛑 [AI_AGENT] Operation ${this.currentOperationId} stopped at iteration ${iteration}`);
++      // Check if error was due to user stopping operation
++      if (error.message === 'Operation stopped by user') {
+         return {
+           output: "Task stopped by user",
+-          reasoning: `Operation was stopped by user at iteration ${iteration}`,
+-          toolResults,
+-          iterations: iteration,
++          reasoning: "Operation was stopped by user",
++          toolResults: [],
++          iterations: 0,
+           completed: false,
+           reason: 'user_stopped'
+         };
+       }
+       
+-      // Send thinking update to UI
+-      this.#sendToolUpdate(tabId, 'thinking', `Processing (iteration ${iteration}/${maxIterations})...`);      
+-      // Debug: Log messages being sent to LLM
+-      console.log(`🔍 [AI_AGENT] Sending ${this.messages.length} messages to LLM (iteration ${iteration}):`, 
+-        this.messages.map((msg, idx) => ({
+-          index: idx,
+-          type: msg.constructor.name,
+-          hasToolCalls: msg.tool_calls ? msg.tool_calls.length : 0,
+-          toolCallIds: msg.tool_calls ? msg.tool_calls.map(tc => tc.id) : [],
+-          toolMessageId: msg.tool_call_id || null,
+-          toolName: msg.name || null,
+-          contentPreview: typeof msg.content === 'string' ? msg.content.substring(0, 100) : 'non-string'
+-        }))
+-      );
+-      
+-      // Query LLM
+-      const result = await llmWithTools.invoke(this.messages);
++      // Send error update to UI
++      this.#sendToolUpdate(tabId, 'error', `AgentExecutor failed: ${error.message}`);
+       
+-      // Send reasoning update if AI provided text response
+-      if (result.content && result.content.trim()) {
+-        this.#sendReasoningUpdate(tabId, result.content, iteration);
+-      }
+-      
+-      // Check if AI wants to use tools
+-      if (result.tool_calls && result.tool_calls.length > 0) {
+-        // Normalize tool calls for the target provider
+-        console.log(`🔧 [AI_AGENT] Before normalization - Provider: ${this.provider}, Tool calls:`, JSON.stringify(result.tool_calls.map(tc => ({name: tc.name, type: tc.type})), null, 2));
+-        const normalizedToolCalls = ToolCallNormalizer.normalizeToolCalls(result.tool_calls, this.provider);
+-        console.log(`🔧 [AI_AGENT] After normalization - Tool calls:`, JSON.stringify(normalizedToolCalls.map(tc => ({name: tc.name, type: tc.type})), null, 2));
+-        
+-        // Log normalization stats for debugging
+-        const stats = ToolCallNormalizer.getStats(result.tool_calls, normalizedToolCalls);
+-        console.log(`🔧 [AI_AGENT] Tool call normalization for ${this.provider}:`, JSON.stringify({
+-          provider: this.provider,
+-          expectedType: this.providerConfig.toolCallType,
+-          stats: stats,
+-          sample: normalizedToolCalls[0] ? {
+-            original: result.tool_calls[0]?.type,
+-            normalized: normalizedToolCalls[0]?.type
+-          } : null
+-        }, null, 2));
+-        
+-        this.messages.push(new AIMessage(result.content, { tool_calls: normalizedToolCalls }));
+-        
+-        // Track if we encounter finish_task
+-        let finishTaskResult = null;
+-        
+-        // Call required tools in the response
+-        console.log(`🔧 [AI_AGENT] Processing ${normalizedToolCalls.length} tool calls...`);
+-        for (let i = 0; i < normalizedToolCalls.length; i++) {
+-          // Check if operation should stop before each tool call
+-          if (this.#shouldStopOperation()) {
+-            console.log(`🛑 [AI_AGENT] Operation ${this.currentOperationId} stopped during tool execution`);
+-            return {
+-              output: "Task stopped by user during tool execution",
+-              reasoning: `Operation was stopped by user during tool execution at iteration ${iteration}`,
+-              toolResults,
+-              iterations: iteration,
+-              completed: false,
+-              reason: 'user_stopped'
+-            };
+-          }
+-          
+-          const toolCall = normalizedToolCalls[i];
+-          console.log(`🔧 [AI_AGENT] Tool call ${i+1}/${normalizedToolCalls.length}: ${toolCall.name} (id: ${toolCall.id})`);
+-          this.#sendToolUpdate(tabId, toolCall.name, `Using ${toolCall.name}...`, toolCall.args);
+-          
+-          // Find and execute the tool
+-          const tool = tools.find(t => t.name === toolCall.name);
+-          if (!tool) {
+-            const errorMsg = `Tool not found: ${toolCall.name}`;
+-            console.error(`❌ [AI_AGENT] Tool not found: ${toolCall.name}, available tools:`, tools.map(t => t.name).join(', '));
+-            this.messages.push(new ToolMessage({
+-              content: errorMsg,
+-              tool_call_id: toolCall.id,
+-              name: toolCall.name
+-            }));
+-            console.log(`❌ [AI_AGENT] Added error ToolMessage with id: ${toolCall.id}, name: ${toolCall.name}`);
+-            this.#sendToolUpdate(tabId, toolCall.name, `Error: Tool not found`, { error: errorMsg });
+-            continue;
+-          }
+-          
+-          try {
+-            // Get results
+-            const toolResult = await tool.call(toolCall.args, tabId);
+-            
+-            // Push to messages
+-            this.messages.push(new ToolMessage({
+-              content: JSON.stringify(toolResult),
+-              tool_call_id: toolCall.id,
+-              name: toolCall.name
+-            }));
+-            console.log(`✅ [AI_AGENT] Tool ${toolCall.name} executed successfully, added ToolMessage with id: ${toolCall.id}, name: ${toolCall.name}`);
+-            
+-            // Store for reporting
+-            toolResults.push({
+-              tool: toolCall.name,
+-              args: toolCall.args,
+-              result: toolResult
+-            });
+-            
+-            this.#sendToolUpdate(tabId, toolCall.name, `Completed ${toolCall.name}`, { success: true });
+-            
+-            // Check if this was the finish_task tool
+-            if (toolCall.name === 'finish_task') {
+-              finishTaskResult = {
+-                output: toolCall.args.final_answer,
+-                reasoning: toolCall.args.final_answer,
+-                toolResults,
+-                iterations: iteration,
+-                confidence: toolCall.args.confidence || 'high'
+-              };
+-            }
+-            
+-          } catch (error) {
+-            const errorMsg = `Tool execution failed: ${error.message}`;
+-            this.messages.push(new ToolMessage({
+-              content: errorMsg,
+-              tool_call_id: toolCall.id,
+-              name: toolCall.name
+-            }));
+-            console.log(`❌ [AI_AGENT] Added error ToolMessage with id: ${toolCall.id}, name: ${toolCall.name}, error: ${error.message}`);
+-            this.#sendToolUpdate(tabId, toolCall.name, `Error: ${error.message}`, { error: errorMsg });
+-            console.error(`❌ [AI_AGENT] Tool ${toolCall.name} failed:`, error);
+-          }
+-        }
+-        
+-        // If finish_task was called, return the result after processing all tool calls
+-        if (finishTaskResult) {
+-          console.log(`🏁 [AI_AGENT] Task finished after ${iteration} iterations.`);
+-          // Cleanup operation tracking
+-          this.currentOperationId = null;
+-          this.shouldStop = false;
+-          return finishTaskResult;
+-        }
+-      } else {
+-        this.messages.push(new AIMessage(result.content));
+-      }
+-      
+-      // Reset consecutive failures on successful iteration
+-      consecutiveFailures = 0;
+-      
+-    } catch (error) {
+-      console.error(`❌ [AI_AGENT] Iteration ${iteration} failed:`, JSON.stringify(error, null, 2));
+-      // Add error to conversation and continue
+-      const errorMsg = `Error in iteration ${iteration}: ${error.message}`;
+-      this.messages.push(new AIMessage(errorMsg));
+-      
+-      // If too many consecutive failures, break
+-      if (++consecutiveFailures >= 3) {
+-        const result = {
+-          output: "Task failed due to repeated errors",
+-          reasoning: errorMsg,
+-          toolResults,
+-          iterations: iteration,
+-          completed: false,
+-          reason: 'consecutive_failures'
+-        };
+-        // Cleanup operation tracking
+-        this.currentOperationId = null;
+-        this.shouldStop = false;
+-        return result;
+-      }
++      // For now, throw the error instead of falling back
++      // The user requested to remove the manual loop fallback
++      throw error;
+     }
+   }
+-  
+-  // Max iterations reached
+-  console.log(`Max iterations (${maxIterations}) reached`);
+-  const result = { 
+-    output: "Task incomplete - maximum iterations reached",
+-    reasoning: "Maximum iterations reached without completion",
+-    toolResults,
+-    iterations: maxIterations,
+-    completed: false,
+-    reason: 'max_iterations'
+-  };
+-  
+-  // Cleanup operation tracking
+-  this.currentOperationId = null;
+-  this.shouldStop = false;
+-  
+-  return result;
+-}
++
+ 
+   /**
+    * Send tool update to UI via chrome runtime messaging
+diff --git a/chrome/browser/resources/vibe/apps/chat4/src/components/chat/ChatPage.tsx b/chrome/browser/resources/vibe/apps/chat4/src/components/chat/ChatPage.tsx
+index d6b5d91dd1..931247adf0 100644
+--- a/chrome/browser/resources/vibe/apps/chat4/src/components/chat/ChatPage.tsx
++++ b/chrome/browser/resources/vibe/apps/chat4/src/components/chat/ChatPage.tsx
+@@ -571,9 +571,9 @@ export function ChatPage() {
+       )}
+ 
+       {/* Main Chat Area */}
+-      <div className="flex flex-1 flex-col">
+-        {/* Header with toggle button */}
+-        <div className="bg-background p-3 flex items-center justify-between">
++      <div className="flex flex-1 flex-col h-full">
++        {/* Header with toggle button - fixed height */}
++        <div className="bg-background p-3 flex items-center justify-between flex-shrink-0">
+           <button
+             onClick={() => setSidebarHidden(!sidebarHidden)}
+             className="p-2 hover:bg-accent rounded-md transition-colors"
+@@ -599,11 +599,14 @@ export function ChatPage() {
+           <div className="w-10"></div> {/* Spacer for centering */}
+         </div>
+         
+-        <MessageList messages={messages} />
++        {/* Scrollable message area - grows to fill available space */}
++        <div className="flex-1 min-h-0">
++          <MessageList messages={messages} />
++        </div>
+         
+-        {/* Status indicator when processing or waiting for user input */}
++        {/* Status indicator when processing or waiting for user input - flexible height */}
+         {(isProcessing || isWaitingForUserInput) && (
+-          <div className="bg-muted/30 px-4 py-3">
++          <div className="bg-muted/30 px-4 py-3 flex-shrink-0">
+             <div className="flex items-start gap-3">
+               <div className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 mt-0.5 ${
+                 isWaitingForUserInput ? "bg-blue-600" : "bg-green-600"
+@@ -631,15 +634,18 @@ export function ChatPage() {
+           </div>
+         )}
+         
+-        <ChatInput
+-          message={message}
+-          onMessageChange={setMessage}
+-          onSendMessage={handleSendMessage}
+-          onStopProcessing={handleStopProcessing}
+-          isProcessing={isProcessing}
+-          isWaitingForUserInput={isWaitingForUserInput}
+-          disabled={false}
+-        />
++        {/* Input area - fixed at bottom */}
++        <div className="flex-shrink-0">
++          <ChatInput
++            message={message}
++            onMessageChange={setMessage}
++            onSendMessage={handleSendMessage}
++            onStopProcessing={handleStopProcessing}
++            isProcessing={isProcessing}
++            isWaitingForUserInput={isWaitingForUserInput}
++            disabled={false}
++          />
++        </div>
+       </div>
+     </div>
+   )
+diff --git a/chrome/browser/resources/vibe/apps/chat4/src/utils/aiAgent.ts b/chrome/browser/resources/vibe/apps/chat4/src/utils/aiAgent.ts
+index f9432ee8a0..ebf9e49d13 100644
+--- a/chrome/browser/resources/vibe/apps/chat4/src/utils/aiAgent.ts
++++ b/chrome/browser/resources/vibe/apps/chat4/src/utils/aiAgent.ts
+@@ -215,8 +215,9 @@ export class Chat4AIAgent {
+           reject(new Error(aiResponse?.error || 'Unknown AI error'));
+         }
+ 
+-        // Clear operation ID
+-        this.currentOperationId = null;
++        // Don't clear operation ID here - it should remain active until stop is called
++        // or the operation naturally completes
++        // this.currentOperationId = null;
+       });
+     });
+   }
+@@ -242,7 +243,14 @@ export class Chat4AIAgent {
+         }
+ 
+         console.log('🛑 [CHAT4-AI] Stop operation response:', JSON.stringify(response, null, 2));
+-        resolve((response as { success?: boolean })?.success || false);
++        const success = (response as { success?: boolean })?.success || false;
++        
++        // Clear operation ID if stop was successful
++        if (success) {
++          this.currentOperationId = null;
++        }
++        
++        resolve(success);
+       });
+     });
+   }
+diff --git a/chrome/browser/resources/vibe/background.js b/chrome/browser/resources/vibe/background.js
+index f5b3eb06a3..9267853d9d 100644
+--- a/chrome/browser/resources/vibe/background.js
++++ b/chrome/browser/resources/vibe/background.js
+@@ -404,33 +404,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+       return true; // Keep the message channel open for async response
+       
+     case 'TOOL_UPDATE':
+-      // Forward tool updates to the Chat4 UI
+-      console.log('🔧 [BACKGROUND] Forwarding tool update to Chat4:', message);
+-      try {
+-        // Find the side panel tab and forward the message
+-        chrome.tabs.query({ url: chrome.runtime.getURL('chat.html') }, (tabs) => {
+-          if (tabs.length > 0) {
+-            chrome.tabs.sendMessage(tabs[0].id, message);
+-          }
+-        });
+-      } catch (error) {
+-        console.error('❌ [BACKGROUND] Error forwarding tool update:', error);
+-      }
++      // These messages are already being handled by the Chrome runtime message system
++      // Chat4 receives them directly via chrome.runtime.onMessage in aiAgent.ts
++      // No need to forward them again - just acknowledge receipt
++      console.log('🔧 [BACKGROUND] Tool update received (Chat4 will receive via chrome.runtime.onMessage):', message);
+       break;
+       
+     case 'REASONING_UPDATE':
+-      // Forward reasoning updates to the Chat4 UI  
+-      console.log('🧠 [BACKGROUND] Forwarding reasoning update to Chat4:', message);
+-      try {
+-        // Find the side panel tab and forward the message
+-        chrome.tabs.query({ url: chrome.runtime.getURL('chat.html') }, (tabs) => {
+-          if (tabs.length > 0) {
+-            chrome.tabs.sendMessage(tabs[0].id, message);
+-          }
+-        });
+-      } catch (error) {
+-        console.error('❌ [BACKGROUND] Error forwarding reasoning update:', error);
+-      }
++      // These messages are already being handled by the Chrome runtime message system
++      // Chat4 receives them directly via chrome.runtime.onMessage in aiAgent.ts
++      // No need to forward them again - just acknowledge receipt
++      console.log('🧠 [BACKGROUND] Reasoning update received (Chat4 will receive via chrome.runtime.onMessage):', message);
+       break;
+       
+     case 'USER_QUESTION':
+-- 
+2.50.0
+

@@ -1,0 +1,3008 @@
+From af98ea98fc8460467f55ddf374225dbd855e8ced Mon Sep 17 00:00:00 2001
+From: Den <2119348+dzianisv@users.noreply.github.com>
+Date: Sat, 26 Jul 2025 01:35:25 +0300
+Subject: [PATCH 34/91] Vibe chat is Ready!
+
+---
+ chrome/browser/resources/vibe/ai_agent.js     |   23 +-
+ .../resources/vibe/ai_tools.extension.js      |   97 ++
+ .../chat4/src/components/chat/ChatPage.tsx    |  123 +-
+ .../chat4/src/components/chat/MessageList.tsx |    5 +-
+ .../chat4/src/components/chat/Sidebar.tsx     |    2 +-
+ .../vibe/apps/chat4/src/template.html         |    2 +-
+ .../vibe/apps/chat4/src/utils/aiAgent.ts      |   13 +-
+ .../vibe/apps/sidepanel/sidepanel.css         |  129 --
+ .../vibe/apps/sidepanel/sidepanel.html        |  131 --
+ .../vibe/apps/sidepanel/sidepanel.js          | 1059 -----------------
+ chrome/browser/resources/vibe/sidepanel.css   |  129 --
+ chrome/browser/resources/vibe/sidepanel.js    | 1059 -----------------
+ 12 files changed, 243 insertions(+), 2529 deletions(-)
+ delete mode 100644 chrome/browser/resources/vibe/apps/sidepanel/sidepanel.css
+ delete mode 100644 chrome/browser/resources/vibe/apps/sidepanel/sidepanel.html
+ delete mode 100644 chrome/browser/resources/vibe/apps/sidepanel/sidepanel.js
+ delete mode 100644 chrome/browser/resources/vibe/sidepanel.css
+ delete mode 100644 chrome/browser/resources/vibe/sidepanel.js
+
+diff --git a/chrome/browser/resources/vibe/ai_agent.js b/chrome/browser/resources/vibe/ai_agent.js
+index 1e37c50d0b..cb550679e4 100644
+--- a/chrome/browser/resources/vibe/ai_agent.js
++++ b/chrome/browser/resources/vibe/ai_agent.js
+@@ -225,13 +225,13 @@ export class VibeLangchainAgent {
+     }
+     
+     // Log the resolved configuration
+-    console.log(`🔧 [AI_AGENT] Resolved config:`, {
++    console.log(`🔧 [AI_AGENT] Resolved config:`, JSON.stringify({
+       provider: provider,
+       model: config.model,
+       modelName,
+       availableProviders: config.apiKeys ? Object.keys(config.apiKeys).filter(k => config.apiKeys[k]) : [],
+       environmentConfiguration: config.environmentConfiguration
+-    });
++    }, null, 2));
+ 
+     if (!apiKey) {
+       throw new Error("API key not configured. Please set your API key in settings or environment variables.");
+@@ -254,22 +254,22 @@ export class VibeLangchainAgent {
+       // Note: Gemini and Anthropic use fixed endpoints, so baseURL changes aren't supported
+     }
+     
+-    console.log(`🔧 [AI_AGENT] Model config:`, { 
++    console.log(`🔧 [AI_AGENT] Model config:`, JSON.stringify({ 
+       modelName, 
+       hasApiKey: !!modelConfig.apiKey,
+       hasBaseURL: !!modelConfig.baseURL
+-    });
++    }, null, 2));
+ 
+     console.log(`🚀 [AI_AGENT] Attempting to initialize model: ${modelName}`);
+     let llm;
+     try {
+       llm = await initChatModel(modelName, modelConfig);
+-      console.log(`📱 [AI_AGENT] initChatModel returned:`, {
++      console.log(`📱 [AI_AGENT] initChatModel returned:`, JSON.stringify({
+         type: typeof llm,
+         isNull: llm === null,
+         isUndefined: llm === undefined,
+         hasBindMethod: llm && typeof llm.bind === 'function'
+-      });
++      }, null, 2));
+     } catch (initError) {
+       console.error(`❌ [AI_AGENT] initChatModel failed:`, initError);
+       throw new Error(`Model initialization failed: ${initError.message}`);
+@@ -295,12 +295,12 @@ export class VibeLangchainAgent {
+ 
+     // Bind tools to the model for function calling using LangChain v0.3 API
+     const llmWithTools = llm.bindTools(langchainTools);
+-    console.log(`🔧 [AI_AGENT] Tools bound to model:`, {
++    console.log(`🔧 [AI_AGENT] Tools bound to model:`, JSON.stringify({
+       toolCount: langchainTools.length,
+       toolNames: langchainTools.map(t => t.name),
+       modelHasBindTools: typeof llm.bindTools === 'function',
+       boundModelType: typeof llmWithTools
+-    });
++    }, null, 2));
+ 
+     // Initialize LangChain memory with intelligent summarization
+     if (!this.memory) {
+@@ -334,9 +334,14 @@ export class VibeLangchainAgent {
+ **THINK LIKE A HUMAN**: 
+ "I typed SFO and now there are airport suggestions marked [DROPDOWN OPTION]. I should click the right one."
+ 
++If asked to find a flight: flights.google.com
++If asked to find a hotel, check a few sources booking.com, hotels.com, agoda.com 
++If asked to find apartment, studio or a room, check airbnb.com. 
++If asked to find a product, check amazon.com, walmart.com, aliexpress.com, temu.com
++
+ **Available Tools:** ${langchainTools.map(t => t.name).join(', ')}
+ 
+-Tab: ${tabId}`;
++`;
+ 
+     const maxIterations = config.maxIterations || 32;
+     const maxTokens = config.maxTokens || 128000; // Token budget guard
+diff --git a/chrome/browser/resources/vibe/ai_tools.extension.js b/chrome/browser/resources/vibe/ai_tools.extension.js
+index aa57a4758b..8edd3d3cac 100644
+--- a/chrome/browser/resources/vibe/ai_tools.extension.js
++++ b/chrome/browser/resources/vibe/ai_tools.extension.js
+@@ -378,6 +378,103 @@ class GetDomStructureTool extends BrowserTool {
+   }
+ }
+ 
++class GetPageContentTool extends BrowserTool {
++  constructor() {
++    super(
++      "get_page_content",
++      "Extract the full text content from the current web page, including all visible text elements.",
++      z.object({
++        tabId: CommonToolArgs.tabId
++      })
++    );
++  }
++
++  async call({ tabId }) {
++    try {
++      const targetTab = tabId ? { id: tabId } : await getCurrentActiveTab();
++      
++      // Execute script to extract page content
++      const [{ result, error }] = await chrome.scripting.executeScript({
++        target: { tabId: targetTab.id },
++        func: () => {
++          try {
++            // Extract all visible text content from the page
++            const walker = document.createTreeWalker(
++              document.body,
++              NodeFilter.SHOW_TEXT,
++              {
++                acceptNode: function(node) {
++                  // Skip script and style elements
++                  const parent = node.parentElement;
++                  if (!parent) return NodeFilter.FILTER_REJECT;
++                  
++                  const tagName = parent.tagName.toLowerCase();
++                  if (['script', 'style', 'noscript'].includes(tagName)) {
++                    return NodeFilter.FILTER_REJECT;
++                  }
++                  
++                  // Skip hidden elements
++                  const style = window.getComputedStyle(parent);
++                  if (style.display === 'none' || style.visibility === 'hidden') {
++                    return NodeFilter.FILTER_REJECT;
++                  }
++                  
++                  // Only include text nodes with meaningful content
++                  const text = node.textContent.trim();
++                  if (text.length === 0) {
++                    return NodeFilter.FILTER_REJECT;
++                  }
++                  
++                  return NodeFilter.FILTER_ACCEPT;
++                }
++              }
++            );
++            
++            const textContent = [];
++            let node;
++            while (node = walker.nextNode()) {
++              const text = node.textContent.trim();
++              if (text) {
++                textContent.push(text);
++              }
++            }
++            
++            return {
++              success: true,
++              content: textContent.join(' '),
++              title: document.title,
++              url: window.location.href
++            };
++          } catch (e) {
++            return {
++              success: false,
++              error: e.message || String(e)
++            };
++          }
++        },
++      });
++      
++      if (error) {
++        throw new Error('Script execution failed: ' + error);
++      }
++      
++      const parsedResult = result;
++      
++      if (!parsedResult.success) {
++        throw new Error(parsedResult.error || 'Failed to extract page content');
++      }
++      
++      // Return formatted content
++      return `Page Title: ${parsedResult.title}\nURL: ${parsedResult.url}\n\nContent:\n${parsedResult.content}`;
++      
++    } catch (error) {
++      const errorMessage = error instanceof Error ? error.message : String(error);
++      console.error('Error in GetPageContentTool:', errorMessage);
++      throw new Error(`Failed to get page content: ${errorMessage}`);
++    }
++  }
++}
++
+ // Tool to get current active tab information
+ class GetActiveTabTool extends BrowserTool {
+   constructor() {
+diff --git a/chrome/browser/resources/vibe/apps/chat4/src/components/chat/ChatPage.tsx b/chrome/browser/resources/vibe/apps/chat4/src/components/chat/ChatPage.tsx
+index 6e2fe84667..28ab40b623 100644
+--- a/chrome/browser/resources/vibe/apps/chat4/src/components/chat/ChatPage.tsx
++++ b/chrome/browser/resources/vibe/apps/chat4/src/components/chat/ChatPage.tsx
+@@ -149,7 +149,57 @@ export function ChatPage() {
+       aiAgent.cleanup()
+     }
+   }, [currentSessionId, addStatusMessage, getToolDisplayName])
+-  
++
++  // Fetch chat history from background on component mount
++  React.useEffect(() => {
++    const fetchChatHistory = async () => {
++      try {
++        const chromeExt = (window as any).chrome
++        if (!chromeExt?.runtime) {
++          console.log('⚠️ [CHAT4] Chrome extension APIs not available')
++          return
++        }
++        
++        console.log('📖 [CHAT4] Fetching chat history from background...')
++        const response = await chromeExt.runtime.sendMessage({
++          type: 'getChatHistory'
++        })
++        
++        if (response && response.success && response.chatHistory && response.chatHistory.length > 0) {
++          console.log(`📚 [CHAT4] Received ${response.chatHistory.length} messages from background`)
++          
++          // Convert background chat history to Chat4 format
++          const historyMessages: MessageData[] = response.chatHistory.map((msg: any) => ({
++            id: generateId(),
++            content: msg.content,
++            role: msg.type === 'user' ? 'user' : 'assistant',
++            timestamp: new Date(msg.timestamp)
++          }))
++          
++          // Create a session with the chat history
++          const sessionWithHistory: ChatSession = {
++            id: generateId(),
++            title: historyMessages[0]?.content.slice(0, 50) || 'Chat Session',
++            messages: historyMessages,
++            lastMessage: historyMessages[historyMessages.length - 1]?.content || '',
++            timestamp: new Date()
++          }
++          
++          setSessions([sessionWithHistory])
++          setCurrentSessionId(sessionWithHistory.id)
++          console.log('✅ [CHAT4] Chat history loaded and session created successfully')
++        } else {
++          console.log('📭 [CHAT4] No chat history found in background')
++        }
++      } catch (error) {
++        console.error('❌ [CHAT4] Error fetching chat history:', error)
++      }
++    }
++    
++    // Fetch chat history immediately on component mount
++    fetchChatHistory()
++  }, []) // Empty dependency array - run only once on mount
++
+   // Simple width-based detection for automatic hiding
+   React.useEffect(() => {
+     const checkWidth = () => {
+@@ -188,6 +238,74 @@ export function ChatPage() {
+   const handleSendMessage = async () => {
+     if (!message.trim() || isProcessing) return
+ 
++    const currentSession = sessions.find(s => s.id === currentSessionId)
++    const isFirstMessage = !currentSession || currentSession.messages.length === 0
++    
++    if (isFirstMessage) {
++      console.log('🎯 [CHAT4] First message detected, opening sidepanel and forwarding to background')
++      
++      try {
++        // Open sidepanel
++        const chromeExt = (window as any).chrome
++        if (chromeExt?.sidePanel) {
++          await chromeExt.sidePanel.open({ windowId: (await chromeExt.windows.getCurrent()).id })
++          console.log('✅ [CHAT4] Sidepanel opened successfully')
++        }
++        
++        // Forward message to background for processing
++        await chromeExt.runtime.sendMessage({
++          type: 'processCommand',
++          command: message.trim(),
++          source: 'chat4_redirect',
++          operationId: Math.random().toString(36).substring(2)
++        })
++        
++        console.log('✅ [CHAT4] Message forwarded to background for processing')
++        
++        // Clear input and show redirect message
++        setMessage('')
++        
++        // Add redirect message to current session
++        const redirectMessage: MessageData = {
++          id: generateId(),
++          content: `🔄 Redirecting "${message.trim()}" to sidepanel for processing...`,
++          role: "assistant",
++          timestamp: new Date()
++        }
++        
++        // Create or update session with redirect message
++        if (currentSession) {
++          setSessions(prev => prev.map(session => 
++            session.id === currentSessionId
++              ? { 
++                  ...session, 
++                  messages: [...session.messages, redirectMessage],
++                  lastMessage: redirectMessage.content,
++                  timestamp: new Date()
++                }
++              : session
++          ))
++        } else {
++          // Create new session with redirect message
++          const newSession = createNewSession()
++          newSession.messages = [redirectMessage]
++          newSession.lastMessage = redirectMessage.content
++          newSession.title = message.trim().slice(0, 50)
++          setSessions(prev => [newSession, ...prev])
++          setCurrentSessionId(newSession.id)
++        }
++        
++        return
++        
++      } catch (error) {
++        console.error('❌ [CHAT4] Error opening sidepanel or forwarding message:', error)
++        // Fall through to normal processing if sidepanel fails
++      }
++    }
++    
++    // Normal processing for subsequent messages (should rarely happen)
++    console.log('🔄 [CHAT4] Processing message locally (not first message)')
++    
+     // Create session if none exists
+     let sessionId = currentSessionId
+     if (!sessionId) {
+@@ -302,9 +420,10 @@ export function ChatPage() {
+     }
+   }
+ 
+-  // Initialize with a default session if none exist
++  // Initialize with a default session if none exist (only if no chat history was loaded)
+   React.useEffect(() => {
+     if (sessions.length === 0) {
++      console.log('📝 [CHAT4] No sessions found, creating default session')
+       const newSession = createNewSession()
+       setSessions([newSession])
+       setCurrentSessionId(newSession.id)
+diff --git a/chrome/browser/resources/vibe/apps/chat4/src/components/chat/MessageList.tsx b/chrome/browser/resources/vibe/apps/chat4/src/components/chat/MessageList.tsx
+index 3f56029ec0..6d875ea9dc 100644
+--- a/chrome/browser/resources/vibe/apps/chat4/src/components/chat/MessageList.tsx
++++ b/chrome/browser/resources/vibe/apps/chat4/src/components/chat/MessageList.tsx
+@@ -6,9 +6,10 @@ import { Message, type MessageData } from "./Message"
+ 
+ interface MessageListProps {
+   messages: MessageData[]
++  isProcessing?: boolean
+ }
+ 
+-export function MessageList({ messages }: MessageListProps) {
++export function MessageList({ messages, isProcessing }: MessageListProps) {
+   const scrollAreaRef = useRef<HTMLDivElement>(null)
+   
+   useEffect(() => {
+@@ -20,7 +21,7 @@ export function MessageList({ messages }: MessageListProps) {
+     }
+   }, [messages])
+ 
+-  if (messages.length === 0) {
++  if (messages.length === 0 && !isProcessing) {
+     return (
+       <div className="flex flex-1 items-center justify-center">
+         <div className="text-center">
+diff --git a/chrome/browser/resources/vibe/apps/chat4/src/components/chat/Sidebar.tsx b/chrome/browser/resources/vibe/apps/chat4/src/components/chat/Sidebar.tsx
+index b048d9947d..7e71e5dc5d 100644
+--- a/chrome/browser/resources/vibe/apps/chat4/src/components/chat/Sidebar.tsx
++++ b/chrome/browser/resources/vibe/apps/chat4/src/components/chat/Sidebar.tsx
+@@ -83,7 +83,7 @@ export function Sidebar({
+       </ScrollArea>
+ 
+       {/* Footer */}
+-      <div className="border-t p-3 space-y-1">
++      <div className="p-3 space-y-1">
+         <Button 
+           variant="ghost" 
+           className="w-full justify-start gap-2" 
+diff --git a/chrome/browser/resources/vibe/apps/chat4/src/template.html b/chrome/browser/resources/vibe/apps/chat4/src/template.html
+index 815d8db2c8..7a3e0dc453 100644
+--- a/chrome/browser/resources/vibe/apps/chat4/src/template.html
++++ b/chrome/browser/resources/vibe/apps/chat4/src/template.html
+@@ -3,7 +3,7 @@
+ <head>
+   <meta charset="UTF-8">
+   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+-  <title>Chat4 - Vibe Browser AI Assistant</title>
++  <title>Vibe AI</title>
+   <link rel="stylesheet" href="chat.css">
+ </head>
+ <body>
+diff --git a/chrome/browser/resources/vibe/apps/chat4/src/utils/aiAgent.ts b/chrome/browser/resources/vibe/apps/chat4/src/utils/aiAgent.ts
+index f2948133b0..8d4a6b45c6 100644
+--- a/chrome/browser/resources/vibe/apps/chat4/src/utils/aiAgent.ts
++++ b/chrome/browser/resources/vibe/apps/chat4/src/utils/aiAgent.ts
+@@ -111,7 +111,7 @@ export class Chat4AIAgent {
+ 
+       const message = event.data;
+       if (message.type === 'TOOL_UPDATE') {
+-        console.log('🔧 [CHAT4] Received tool update from content script:', message);
++        console.log('🔧 [CHAT4] Received tool update from content script:', JSON.stringify(message, null, 2));
+         if (this.onToolUpdate) {
+           this.onToolUpdate({
+             tool: message.tool,
+@@ -121,7 +121,7 @@ export class Chat4AIAgent {
+           });
+         }
+       } else if (message.type === 'REASONING_UPDATE') {
+-        console.log('🧠 [CHAT4] Received reasoning update from content script:', message);
++        console.log('🧠 [CHAT4] Received reasoning update from content script:', JSON.stringify(message, null, 2));
+         if (this.onReasoningUpdate) {
+           this.onReasoningUpdate({
+             reasoning: message.reasoning,
+@@ -154,16 +154,15 @@ export class Chat4AIAgent {
+       this.currentOperationId = Math.random().toString(36).substring(2);
+ 
+       const message = {
+-        type: "processCommand",
+-        command: content,
+-        source: "chat4",
++        type: "CHAT4_MESSAGE",
++        content: content,
+         operationId: this.currentOperationId
+       };
+ 
+       console.log('🚀 [CHAT4-AI] Sending message to AI agent:', content);
+ 
+       chromeExt.runtime.sendMessage(message, (response: unknown) => {
+-        console.log('📨 [CHAT4-AI] Received AI response:', response);
++        console.log('📨 [CHAT4-AI] Received AI response:', JSON.stringify(response, null, 2));
+         
+         if (chromeExt?.runtime?.lastError) {
+           console.error('❌ [CHAT4-AI] Chrome runtime error:', chromeExt.runtime.lastError);
+@@ -204,7 +203,7 @@ export class Chat4AIAgent {
+           return;
+         }
+ 
+-        console.log('🛑 [CHAT4-AI] Stop operation response:', response);
++        console.log('🛑 [CHAT4-AI] Stop operation response:', JSON.stringify(response, null, 2));
+         resolve((response as { success?: boolean })?.success || false);
+       });
+     });
+diff --git a/chrome/browser/resources/vibe/apps/sidepanel/sidepanel.css b/chrome/browser/resources/vibe/apps/sidepanel/sidepanel.css
+deleted file mode 100644
+index 84d435a507..0000000000
+--- a/chrome/browser/resources/vibe/apps/sidepanel/sidepanel.css
++++ /dev/null
+@@ -1,129 +0,0 @@
+-@tailwind base;
+-@tailwind components;
+-@tailwind utilities;
+-
+-@layer base {
+-  * {
+-    box-sizing: border-box;
+-  }
+-
+-  html, body, #root {
+-    @apply h-full w-full m-0 p-0;
+-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+-  }
+-
+-  body {
+-    @apply antialiased;
+-  }
+-}
+-
+-@layer components {
+-  /* Custom scrollbar */
+-  .messages-container {
+-    scrollbar-width: thin;
+-    scrollbar-color: rgba(156, 163, 175, 0.3) transparent;
+-  }
+-
+-  .messages-container::-webkit-scrollbar {
+-    width: 6px;
+-  }
+-
+-  .messages-container::-webkit-scrollbar-track {
+-    background: transparent;
+-  }
+-
+-  .messages-container::-webkit-scrollbar-thumb {
+-    @apply bg-gray-300 rounded-full;
+-  }
+-
+-  .messages-container::-webkit-scrollbar-thumb:hover {
+-    @apply bg-gray-400;
+-  }
+-
+-  /* Input area auto-resize */
+-  .message-input {
+-    field-sizing: content;
+-  }
+-
+-  /* Message content styling */
+-  .message-content {
+-    line-height: 1.6;
+-  }
+-
+-  .message-content p {
+-    @apply mb-2 last:mb-0;
+-  }
+-
+-  .message-content pre {
+-    @apply bg-gray-900 text-gray-100 p-3 rounded-lg overflow-x-auto text-sm my-2;
+-  }
+-
+-  .message-content code {
+-    @apply bg-gray-100 text-gray-800 px-1.5 py-0.5 rounded text-sm;
+-  }
+-
+-  .message-content pre code {
+-    @apply bg-transparent text-gray-100 p-0;
+-  }
+-
+-  .message-content ul, .message-content ol {
+-    @apply pl-5 mb-2;
+-  }
+-
+-  .message-content li {
+-    @apply mb-1;
+-  }
+-
+-  .message-content blockquote {
+-    @apply border-l-4 border-gray-300 pl-4 italic text-gray-600 my-2;
+-  }
+-
+-  .message-content h1, .message-content h2, .message-content h3, .message-content h4, .message-content h5, .message-content h6 {
+-    @apply font-semibold mt-4 mb-2;
+-  }
+-
+-  .message-content h1 {
+-    @apply text-xl;
+-  }
+-
+-  .message-content h2 {
+-    @apply text-lg;
+-  }
+-
+-  .message-content h3 {
+-    @apply text-base;
+-  }
+-
+-  /* Processing animation */
+-  @keyframes pulse {
+-    0%, 100% {
+-      opacity: 0.4;
+-    }
+-    50% {
+-      opacity: 1;
+-    }
+-  }
+-
+-  .animate-pulse {
+-    animation: pulse 1.5s ease-in-out infinite;
+-  }
+-
+-  /* Focus states */
+-  .focus-within\:border-gray-300:focus-within {
+-    border-color: #d1d5db;
+-  }
+-
+-  /* Button states */
+-  .send-button-enabled {
+-    @apply bg-green-600 hover:bg-green-700 text-white;
+-  }
+-
+-  .send-button-enabled svg {
+-    @apply text-white;
+-  }
+-
+-  /* Smooth transitions */
+-  * {
+-    @apply transition-colors duration-200;
+-  }
+-}
+\ No newline at end of file
+diff --git a/chrome/browser/resources/vibe/apps/sidepanel/sidepanel.html b/chrome/browser/resources/vibe/apps/sidepanel/sidepanel.html
+deleted file mode 100644
+index 1cca7332d4..0000000000
+--- a/chrome/browser/resources/vibe/apps/sidepanel/sidepanel.html
++++ /dev/null
+@@ -1,131 +0,0 @@
+-<!doctype html>
+-<html lang="en" class="h-full">
+-<head>
+-  <meta charset="UTF-8">
+-  <meta name="viewport" content="width=device-width,initial-scale=1">
+-  <title>Vibe AI Agent</title>
+-  <link rel="preconnect" href="https://fonts.googleapis.com">
+-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+-  <link href="./sidepanel.css" rel="stylesheet">
+-</head>
+-<body class="h-full bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 font-inter">
+-  <div id="root" class="h-full flex flex-col">
+-    <!-- Header -->
+-    <div class="shrink-0 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+-      <div class="px-4 py-3">
+-        <div id="modelName" class="text-sm text-gray-600 dark:text-gray-400">GPT-4o mini</div>
+-      </div>
+-    </div>
+-
+-    <!-- Messages container -->
+-    <div class="flex-1 overflow-hidden">
+-      <div id="messages" class="h-full overflow-y-auto">
+-        <div class="messages-container px-4 py-6 max-w-3xl mx-auto">
+-          <!-- Welcome message - hidden when chat starts -->
+-          <div id="welcomeMessage" class="flex justify-center mb-8">
+-            <div class="text-center">
+-              <div class="w-10 h-10 bg-green-600 rounded-full flex items-center justify-center mx-auto mb-4">
+-                <span class="text-white font-bold text-lg">V</span>
+-              </div>
+-              <h2 class="text-xl font-medium text-gray-800 dark:text-gray-200 mb-2">What can I help with?</h2>
+-            </div>
+-          </div>
+-          <!-- Messages will be inserted here by JavaScript -->
+-        </div>
+-      </div>
+-    </div>
+-
+-    <!-- Input area -->
+-    <div class="shrink-0 border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+-      <div class="px-4 py-4">
+-        <div class="relative max-w-3xl mx-auto">
+-          <div class="flex items-end bg-gray-50 dark:bg-gray-700 rounded-2xl border border-gray-200 dark:border-gray-600 focus-within:border-gray-300 dark:focus-within:border-gray-500 transition-colors">
+-            <!-- Attachment button -->
+-            <button class="p-3 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors">
+-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+-                <path d="M15 7v6a3 3 0 0 1-6 0V3a5 5 0 0 1 10 0v10a7 7 0 0 1-14 0V9"></path>
+-              </svg>
+-            </button>
+-            
+-            <textarea
+-              id="messageInput"
+-              class="flex-1 resize-none bg-transparent px-2 py-3 text-sm outline-none placeholder-gray-500 dark:placeholder-gray-400 text-gray-900 dark:text-gray-100 min-h-[44px] max-h-32"
+-              placeholder="Message Vibe AI"
+-              rows="1"
+-              spellcheck="true"
+-            ></textarea>
+-            
+-            <!-- Voice input button -->
+-            <button class="p-3 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors">
+-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+-                <path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path>
+-                <path d="M19 10v1a7 7 0 0 1-14 0v-1"></path>
+-                <line x1="12" y1="18" x2="12" y2="22"></line>
+-                <line x1="8" y1="22" x2="16" y2="22"></line>
+-              </svg>
+-            </button>
+-            
+-            <button id="sendButton" class="p-2 m-1 rounded-lg bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors" disabled>
+-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="text-gray-600 dark:text-gray-300">
+-                <line x1="22" y1="2" x2="11" y2="13"></line>
+-                <polygon points="22,2 15,22 11,13 2,9 22,2"></polygon>
+-              </svg>
+-            </button>
+-          </div>
+-        </div>
+-      </div>
+-    </div>
+-  </div>
+-
+-  <!-- Message templates -->
+-  <template id="userMessageTemplate">
+-    <div class="flex justify-end mb-6">
+-      <div class="bg-gray-100 dark:bg-gray-700 rounded-2xl px-4 py-3 max-w-xs lg:max-w-md text-sm text-gray-900 dark:text-gray-100">
+-        <div class="message-content"></div>
+-      </div>
+-    </div>
+-  </template>
+-
+-  <template id="assistantMessageTemplate">
+-    <div class="flex justify-start mb-6">
+-      <div class="flex items-start space-x-3 max-w-full">
+-        <div class="w-7 h-7 bg-green-600 rounded-full flex items-center justify-center shrink-0 mt-1">
+-          <span class="text-white font-bold text-xs">AI</span>
+-        </div>
+-        <div class="message-content text-sm leading-relaxed max-w-none text-gray-900 dark:text-gray-100"></div>
+-      </div>
+-    </div>
+-  </template>
+-
+-  <template id="systemMessageTemplate">
+-    <div class="flex justify-center mb-4">
+-      <div class="text-xs text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-700 px-3 py-1 rounded-full">
+-        <div class="message-content"></div>
+-      </div>
+-    </div>
+-  </template>
+-  
+-  <!-- Thinking indicator template -->
+-  <template id="thinkingTemplate">
+-    <div class="flex justify-start mb-6">
+-      <div class="flex items-start space-x-3 max-w-full">
+-        <div class="w-7 h-7 bg-green-600 rounded-full flex items-center justify-center shrink-0 mt-1">
+-          <span class="text-white font-bold text-xs">AI</span>
+-        </div>
+-        <div class="text-sm text-gray-600 dark:text-gray-400 italic bg-gray-50 dark:bg-gray-700 px-3 py-2 rounded-lg">
+-          <div class="thinking-content">
+-            <div class="tool-indicator flex items-center gap-2">
+-              <div class="animate-spin rounded-full h-3 w-3 border-b-2 border-green-600"></div>
+-              <span class="tool-name">Thinking...</span>
+-            </div>
+-            <div class="thinking-duration-text text-xs opacity-75 mt-1">for <span class="thinking-duration">0</span> seconds</div>
+-          </div>
+-        </div>
+-      </div>
+-    </div>
+-  </template>
+-
+-  <script src="sidepanel.js"></script>
+-</body>
+-</html>
+\ No newline at end of file
+diff --git a/chrome/browser/resources/vibe/apps/sidepanel/sidepanel.js b/chrome/browser/resources/vibe/apps/sidepanel/sidepanel.js
+deleted file mode 100644
+index c287a905e9..0000000000
+--- a/chrome/browser/resources/vibe/apps/sidepanel/sidepanel.js
++++ /dev/null
+@@ -1,1059 +0,0 @@
+-// @ts-nocheck
+-
+-/**
+- * Vibe AI Agent Side Panel
+- * Main UI for AI agent interaction and control
+- */
+-
+-class VibeAISidePanel {
+-  constructor() {
+-    // Main containers
+-    this.messagesContainer = document.querySelector(".messages-container");
+-    this.messageInput = document.getElementById("messageInput");
+-    this.sendButton = document.getElementById("sendButton");
+-    this.welcomeMessage = document.getElementById("welcomeMessage");
+-    
+-    // State
+-    this.isProcessing = false;
+-    this.messageHistory = [];
+-    this.currentOperationId = null;
+-    this.pendingQuestionRequest = null;
+-    this.thinkingStartTime = null;
+-    this.currentTool = null;
+-    
+-    // Templates
+-    this.userMessageTemplate = document.getElementById("userMessageTemplate").content;
+-    this.assistantMessageTemplate = document.getElementById("assistantMessageTemplate").content;
+-    this.systemMessageTemplate = document.getElementById("systemMessageTemplate").content;
+-    this.thinkingTemplate = document.getElementById("thinkingTemplate").content;
+-    
+-    this.initialize();
+-  }
+-  
+-  initialize() {
+-    console.log("Initializing Vibe AI Side Panel...");
+-    
+-    // Set up dark mode detection
+-    this.setupDarkMode();
+-    
+-    // Initialize event listeners
+-    this.initializeEventListeners();
+-    
+-    // Set up message input auto-resize
+-    this.setupMessageInput();
+-    
+-    // Listen for messages from background script
+-    chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+-      const result = this.handleBackgroundMessage(message, sender, sendResponse);
+-      if (!result) {
+-        sendResponse({ success: true });
+-      }
+-      return result; // Keep channel open if needed
+-    });
+-    
+-    // Update status
+-    this.updateStatus("ready", "Ready");
+-    
+-    // Load any existing messages from storage
+-    this.loadMessages();
+-    
+-    console.log("✅ [SIDE-PANEL] [sidepanel.js] Vibe AI Side Panel initialized");
+-  }
+-  
+-  initializeEventListeners() {
+-    // Send message on button click or Enter key (but allow Shift+Enter for new lines)
+-    this.sendButton.addEventListener("click", () => this.sendMessage());
+-    this.messageInput.addEventListener("keydown", (e) => {
+-      if (e.key === "Enter" && !e.shiftKey) {
+-        e.preventDefault();
+-        this.sendMessage();
+-      }
+-    });
+-    
+-    // Stop button
+-    if (this.stopButton) {
+-      this.stopButton.addEventListener("click", () => this.stopProcessing());
+-    }
+-    
+-    // Theme toggle
+-    if (this.themeToggle) {
+-      this.themeToggle.addEventListener("click", () => this.toggleDarkMode());
+-    }
+-    
+-    // Keyboard shortcut: Cmd/Ctrl + E to focus input
+-    document.addEventListener("keydown", (e) => {
+-      if ((e.ctrlKey || e.metaKey) && e.key === "e") {
+-        e.preventDefault();
+-        this.messageInput.focus();
+-      }
+-    });
+-  }
+-  
+-  setupMessageInput() {
+-    // Auto-resize textarea as user types
+-    this.messageInput.addEventListener('input', () => {
+-      this.messageInput.style.height = 'auto';
+-      this.messageInput.style.height = Math.min(this.messageInput.scrollHeight, 200) + 'px';
+-    });
+-    
+-    // Focus the input when the panel is opened
+-    this.messageInput.focus();
+-  }
+-  
+-  setupDarkMode() {
+-    // Check for saved preference or system preference
+-    const savedTheme = localStorage.getItem('vibe-theme');
+-    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+-    
+-    if (savedTheme === 'dark' || (!savedTheme && prefersDark)) {
+-      this.enableDarkMode();
+-    } else {
+-      this.disableDarkMode();
+-    }
+-  }
+-  
+-  toggleDarkMode() {
+-    if (document.documentElement.classList.contains('dark')) {
+-      this.disableDarkMode();
+-    } else {
+-      this.enableDarkMode();
+-    }
+-  }
+-  
+-  enableDarkMode() {
+-    document.documentElement.classList.add('dark');
+-    localStorage.setItem('vibe-theme', 'dark');
+-    this.isDarkMode = true;
+-    this.updateThemeIcon(true);
+-  }
+-  
+-  disableDarkMode() {
+-    document.documentElement.classList.remove('dark');
+-    localStorage.setItem('vibe-theme', 'light');
+-    this.isDarkMode = false;
+-    this.updateThemeIcon(false);
+-  }
+-  
+-  updateThemeIcon(isDark) {
+-    if (!this.themeIcon) return;
+-    
+-    // Update the icon based on theme
+-    if (isDark) {
+-      // Moon icon for dark mode
+-      this.themeIcon.innerHTML = `
+-        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+-      `;
+-    } else {
+-      // Sun icon for light mode
+-      this.themeIcon.innerHTML = `
+-        <circle cx="12" cy="12" r="5"></circle>
+-        <line x1="12" y1="1" x2="12" y2="3"></line>
+-        <line x1="12" y1="21" x2="12" y2="23"></line>
+-        <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+-        <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+-        <line x1="1" y1="12" x2="3" y2="12"></line>
+-        <line x1="21" y1="12" x2="23" y2="12"></line>
+-        <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+-        <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+-      `;
+-    }
+-  }
+-  
+-  /**
+-   * Handles sending a message
+-   * @param {string} [customMessage] - Optional custom message to send
+-   */
+-  async sendMessage(customMessage) {
+-    try {
+-      const message = customMessage || this.messageInput.value.trim();
+-      if (!message) return;
+-      
+-      // Check if we have a pending question request
+-      if (this.pendingQuestionRequest) {
+-        const response = {
+-          requestId: this.pendingQuestionRequest.requestId,
+-          response: message,
+-          timestamp: new Date().toISOString()
+-        };
+-        
+-        // Add user message to chat
+-        this.addMessage('user', message);
+-        
+-        // Clear input if this was from the input field
+-        if (!customMessage) {
+-          this.messageInput.value = '';
+-          this.messageInput.style.height = 'auto'; // Reset input height
+-        }
+-        
+-        // Send response back to background script
+-        await new Promise((resolve) => {
+-          chrome.runtime.sendMessage({
+-            type: 'USER_QUESTION_RESPONSE',
+-            response
+-          }, resolve);
+-        });
+-        
+-        // Clear pending question and update status
+-        this.pendingQuestionRequest = null;
+-        this.updateStatus('Response sent', 'success');
+-        return;
+-      }
+-      
+-      // Normal message handling - check if processing
+-      if (this.isProcessing) return;
+-      
+-      // Add user message to chat
+-      this.addMessage('user', message);
+-      
+-      // Clear input if this was from the input field
+-      if (!customMessage) {
+-        this.messageInput.value = '';
+-        this.messageInput.style.height = 'auto'; // Reset input height
+-      }
+-      
+-      // Show loading indicator and auto-scroll
+-      this.setProcessing(true);
+-      this.scrollToBottom({ behavior: 'smooth' });
+-      
+-      // Generate operation ID
+-      this.currentOperationId = `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+-      
+-      console.log('🔍 [SIDE-PANEL] [sidepanel.js] Checking navigator.vibeBrowser:', !!navigator.vibeBrowser);
+-      console.log('🔍 [SIDE-PANEL] [sidepanel.js] Checking processAIPrompt:', !!(navigator.vibeBrowser?.processAIPrompt));
+-      
+-      // Try using C++ API if available, otherwise fall back to extension messaging
+-      if (navigator.vibeBrowser?.processAIPrompt) {
+-        // Use the C++ API directly
+-        console.log('🔧 [SIDE-PANEL] [sidepanel.js] Using C++ API for processing');
+-        const result = await navigator.vibeBrowser.processAIPrompt(message);
+-        if (result && result.success) {
+-          this.addMessage("agent", result.result || "AI processed successfully");
+-        } else {
+-          this.addMessage("agent", result?.error || "AI processing failed");
+-        }
+-      } else {
+-        // Fallback: Send to background script for processing
+-        console.log('🔧 [SIDE-PANEL] [sidepanel.js] Using extension background script for processing');
+-        chrome.runtime.sendMessage({
+-          type: "processCommand",
+-          command: message,
+-          source: "sidepanel",
+-          operationId: this.currentOperationId
+-        }, (response) => {
+-          // Handle the response with tool results
+-          if (chrome.runtime.lastError) {
+-            console.error("❌ [SIDE-PANEL] [sidepanel.js] Runtime error:", chrome.runtime.lastError);
+-            this.addMessage("agent", `Error: ${chrome.runtime.lastError.message}`);
+-            this.setProcessing(false);
+-            return;
+-          }
+-          
+-          if (response && response.success) {
+-            // Display individual tool results first
+-            if (response.toolResults && Array.isArray(response.toolResults)) {
+-              response.toolResults.forEach(toolResult => {
+-                if (toolResult.tool === 'reasoning' && toolResult.args) {
+-                  // Display thinking process
+-                  if (toolResult.args.thinking) {
+-                    this.addMessage("agent", `💭 **Thinking**: ${toolResult.args.thinking}`);
+-                  }
+-                  if (toolResult.args.evaluation) {
+-                    this.addMessage("agent", `📊 **Evaluation**: ${toolResult.args.evaluation}`);
+-                  }
+-                  if (toolResult.args.next_goal) {
+-                    this.addMessage("agent", `🎯 **Next Goal**: ${toolResult.args.next_goal}`);
+-                  }
+-                } else if (toolResult.tool !== 'reasoning') {
+-                  // Display other tool results with enhanced formatting
+-                  const result = toolResult.result;
+-                  if (result && !result.error) {
+-                    const resultText = typeof result === 'string' ? result : 'Success';
+-                    this.addMessage("system", `🔧 **${toolResult.tool}**: ${resultText}`);
+-                  } else if (result && result.error) {
+-                    this.addMessage("system", `❌ **${toolResult.tool}**: ${result.error}`);
+-                  }
+-                }
+-              });
+-            }
+-            
+-            // Display final response
+-            this.addMessage("agent", response.response || 'Task completed');
+-          } else {
+-            this.addMessage("agent", `❌ ${response?.error || response?.response || 'Unknown error'}`);
+-          }
+-          
+-          this.setProcessing(false);
+-        });
+-      }
+-    } catch (error) {
+-      console.error("❌ [SIDE-PANEL] [sidepanel.js] Error sending message:", error);
+-      this.addMessage("agent", `Error: ${error.message}`);
+-      this.setProcessing(false);
+-    }
+-    // Note: We don't call setProcessing(false) here anymore
+-    // as it will be handled by the message listener
+-  }
+-  
+-  /**
+-   * Adds a message to the chat with proper styling
+-   * @param {string} type - 'user', 'agent', or 'system'
+-   * @param {string} content - The message content (can include markdown)
+-   * @param {Object} options - Additional options
+-   * @param {boolean} options.isHtml - Whether the content is already HTML
+-   * @returns {HTMLElement} The created message element
+-   */
+-  addMessage(type, content, options = {}) {
+-    // Hide welcome message when first message is added
+-    if (this.welcomeMessage && !this.welcomeMessage.classList.contains('hidden')) {
+-      this.welcomeMessage.classList.add('hidden');
+-    }
+-    
+-    let messageEl, messageContent;
+-    
+-    // Select the appropriate template based on message type
+-    if (type === 'user') {
+-      messageEl = document.importNode(this.userMessageTemplate, true).firstElementChild;
+-      messageContent = messageEl.querySelector('.message-content');
+-    } else if (type === 'system') {
+-      messageEl = document.importNode(this.systemMessageTemplate, true).firstElementChild;
+-      messageContent = messageEl.querySelector('.message-content');
+-    } else { // 'agent' or 'assistant'
+-      messageEl = document.importNode(this.assistantMessageTemplate, true).firstElementChild;
+-      messageContent = messageEl.querySelector('.message-content');
+-    }
+-    
+-    // Convert markdown to HTML if needed and remove emojis for user messages
+-    const htmlContent = options.isHtml ? content : this.markdownToHtml(content);
+-    const cleanContent = type === 'user' ? this.removeEmojis(htmlContent) : htmlContent;
+-    messageContent.innerHTML = this.sanitizeHtml(cleanContent);
+-    
+-    // Add to message history
+-    this.messageHistory.push({ type, content, timestamp: Date.now() });
+-    
+-    // Add message to container
+-    this.messagesContainer.appendChild(messageEl);
+-    this.scrollToBottom();
+-    
+-    return messageEl;
+-  }
+-  
+-  /**
+-   * Converts markdown to HTML
+-   * @param {string} markdown - Markdown text to convert
+-   * @returns {string} HTML string
+-   */
+-  markdownToHtml(markdown) {
+-    // Simple markdown to HTML conversion
+-    // In a real app, you might want to use a library like marked.js
+-    return markdown
+-      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>') // Bold
+-      .replace(/\*(.*?)\*/g, '<em>$1</em>') // Italic
+-      .replace(/^### (.*$)/gm, '<h3 class="text-lg font-semibold mt-4 mb-2">$1</h3>') // Headers
+-      .replace(/^## (.*$)/gm, '<h2 class="text-xl font-bold mt-5 mb-3">$1</h2>')
+-      .replace(/^# (.*$)/gm, '<h1 class="text-2xl font-bold mt-6 mb-4">$1</h1>')
+-      .replace(/\n/g, '<br>') // Line breaks
+-      .replace(/`([^`]+)`/g, '<code class="bg-gray-100 dark:bg-gray-700 px-1 py-0.5 rounded text-sm">$1</code>') // Inline code
+-      .replace(/```(?:\w+\n)?([\s\S]*?)```/g, 
+-        '<pre class="bg-gray-100 dark:bg-gray-800 p-3 rounded-md overflow-x-auto my-2"><code class="block whitespace-pre">$1</code></pre>') // Code blocks
+-      .replace(/\[([^\]]+)\]\(([^)]+)\)/g, 
+-        '<a href="$2" target="_blank" rel="noopener noreferrer" class="text-blue-600 dark:text-blue-400 hover:underline">$1</a>'); // Links
+-  }
+-  
+-  /**
+-   * Sanitizes HTML to prevent XSS while preserving basic formatting
+-   * @param {string} html - HTML to sanitize
+-   * @returns {string} Sanitized HTML
+-   */
+-  sanitizeHtml(html) {
+-    // Simple sanitization - in production use DOMPurify or similar
+-    const temp = document.createElement('div');
+-    temp.innerHTML = html;
+-    
+-    // Remove script tags and other dangerous elements
+-    const scripts = temp.querySelectorAll('script');
+-    scripts.forEach(script => script.remove());
+-    
+-    return temp.innerHTML;
+-  }
+-  
+-  /**
+-   * Shows a loading indicator while waiting for a response
+-   * @returns {HTMLElement} The loading element
+-   */
+-  showLoading() {
+-    // If loading indicator already exists, just make it visible
+-    if (this.loadingIndicator) {
+-      this.loadingIndicator.classList.remove('hidden');
+-      return this.loadingIndicator;
+-    }
+-    
+-    // Create loading indicator from template
+-    this.loadingIndicator = document.importNode(this.loaderTemplate, true).firstElementChild;
+-    
+-    // Add to messages container
+-    this.messagesContainer.appendChild(this.loadingIndicator);
+-    
+-    // Scroll to show the loading indicator
+-    this.scrollToBottom({ behavior: 'smooth', delay: 100 });
+-    
+-    return this.loadingIndicator;
+-  }
+-  
+-  /**
+-   * Hides the loading indicator with a fade-out effect
+-   */
+-  hideLoading() {
+-    if (!this.loadingIndicator) return;
+-    
+-    // Add fade-out class and remove after animation completes
+-    this.loadingIndicator.classList.add('opacity-0', 'transition-opacity', 'duration-300');
+-    
+-    // Remove the element after the fade-out animation completes
+-    setTimeout(() => {
+-      if (this.loadingIndicator && this.loadingIndicator.parentNode) {
+-        this.loadingIndicator.parentNode.removeChild(this.loadingIndicator);
+-        this.loadingIndicator = null;
+-      }
+-    }, 300);
+-  }
+-  
+-  /**
+-   * Smoothly scrolls the messages container to the bottom
+-   * @param {Object} options - Scroll behavior options
+-   * @param {string} options.behavior - Scroll behavior ('smooth' or 'auto')
+-   * @param {number} options.delay - Delay in milliseconds before scrolling
+-   */
+-  scrollToBottom(options = { behavior: 'smooth', delay: 0 }) {
+-    if (!this.messagesContainer) return;
+-    
+-    const scroll = () => {
+-      this.messagesContainer.scrollTo({
+-        top: this.messagesContainer.scrollHeight,
+-        behavior: options.behavior
+-      });
+-    };
+-    
+-    if (options.delay > 0) {
+-      setTimeout(scroll, options.delay);
+-    } else {
+-      scroll();
+-    }
+-    
+-    // If we're near the bottom, stay scrolled to bottom when new messages arrive
+-    const isNearBottom = 
+-      this.messagesContainer.scrollHeight - this.messagesContainer.clientHeight - 
+-      this.messagesContainer.scrollTop < 100;
+-      
+-    if (isNearBottom) {
+-      requestAnimationFrame(() => {
+-        this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
+-      });
+-    }
+-  }
+-  
+-  /**
+-   * Sets the processing state of the UI
+-   * @param {boolean} processing - Whether processing is in progress
+-   */
+-  setProcessing(processing) {
+-    this.isProcessing = processing;
+-    
+-    // Update input and button states
+-    this.messageInput.disabled = processing;
+-    this.sendButton.disabled = processing || !this.messageInput.value.trim();
+-    
+-    // Update send button styling
+-    if (processing || !this.messageInput.value.trim()) {
+-      this.sendButton.className = "p-2 m-1 rounded-lg bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors";
+-    } else {
+-      this.sendButton.className = "p-2 m-1 rounded-lg bg-green-600 hover:bg-green-700 text-white transition-colors";
+-    }
+-    
+-    // Show/hide thinking indicator
+-    if (processing) {
+-      this.showThinking();
+-    } else {
+-      this.hideThinking();
+-    }
+-  }
+-
+-  /**
+-   * Stops the current processing operation
+-   */
+-  stopProcessing() {
+-    console.log("🛑 [SIDE-PANEL] [sidepanel.js] Stop button clicked");
+-    
+-    if (!this.isProcessing || !this.currentOperationId) {
+-      console.log("⚠️ [SIDE-PANEL] [sidepanel.js] No operation to stop");
+-      return;
+-    }
+-
+-    // Send stop message to background
+-    chrome.runtime.sendMessage({
+-      type: "stopOperation",
+-      operationId: this.currentOperationId,
+-      source: "sidepanel"
+-    });
+-
+-    // Add message and reset state
+-    this.addMessage("system", "🛑 Operation stopped by user");
+-    this.setProcessing(false);
+-    this.currentOperationId = null;
+-  }
+-  
+-  /**
+-   * Updates the status indicator with visual feedback
+-   * @param {string} status - The status message to display
+-   * @param {string} [type='info'] - Status type: 'info', 'success', 'warning', 'error', or 'processing'
+-   * @param {Object} [options] - Additional options
+-   * @param {number} [options.timeout=3000] - Auto-hide timeout in ms (0 to disable)
+-   * @param {boolean} [options.showDot=true] - Whether to show the status dot
+-   */
+-  updateStatus(status, type = 'info', options = {}) {
+-    if (!this.statusIndicator) return;
+-    
+-    const {
+-      timeout = type === 'info' ? 3000 : 0,
+-      showDot = true
+-    } = options;
+-    
+-    // Update status text
+-    const statusText = this.statusIndicator.querySelector('.status-text');
+-    if (statusText) {
+-      statusText.textContent = status || '';
+-      const statusTextClass = type === 'error' ? 'text-red-600 dark:text-red-400' :
+-        type === 'warning' ? 'text-yellow-600 dark:text-yellow-400' :
+-        type === 'success' ? 'text-green-600 dark:text-green-400' :
+-        'text-gray-600 dark:text-gray-400';
+-      statusText.className = `status-text text-xs font-medium ${statusTextClass} transition-colors duration-200`;
+-    }
+-    
+-    // Update status dot if enabled
+-    if (showDot) {
+-      const statusDot = this.statusIndicator.querySelector('.status-dot');
+-      if (statusDot) {
+-        // Remove all status classes
+-        const classesToRemove = [
+-          'bg-green-500', 'bg-yellow-500', 'bg-red-500', 'bg-blue-500', 'bg-gray-400',
+-          'ring-2', 'ring-offset-2', 'ring-green-500', 'ring-yellow-500', 'ring-red-500', 
+-          'ring-blue-500', 'ring-gray-400', 'animate-pulse', 'pulse'
+-        ];
+-        statusDot.classList.remove(...classesToRemove);
+-        
+-        // Add appropriate classes based on status type
+-        const dotClasses = ['w-2', 'h-2', 'rounded-full', 'transition-all', 'duration-300'];
+-        
+-        switch (type) {
+-          case 'success':
+-            dotClasses.push('bg-green-500', 'ring-2', 'ring-green-500/50');
+-            break;
+-          case 'warning':
+-            dotClasses.push('bg-yellow-500', 'ring-2', 'ring-yellow-500/50', 'animate-pulse');
+-            break;
+-          case 'error':
+-            dotClasses.push('bg-red-500', 'ring-2', 'ring-red-500/50', 'pulse');
+-            break;
+-          case 'processing':
+-            dotClasses.push('bg-blue-500', 'ring-2', 'ring-blue-500/50', 'pulse');
+-            break;
+-          default: // info
+-            dotClasses.push('bg-gray-400');
+-        }
+-        
+-        statusDot.className = `status-dot ${dotClasses.join(' ')}`;
+-      }
+-    }
+-    
+-    // Show status indicator with animation
+-    this.statusIndicator.classList.remove('opacity-0', 'invisible');
+-    this.statusIndicator.classList.add('opacity-100', 'transition-opacity', 'duration-200');
+-    
+-    // Auto-hide after delay if specified
+-    if (timeout > 0) {
+-      clearTimeout(this.statusTimeout);
+-      this.statusTimeout = setTimeout(() => {
+-        if (this.statusIndicator) {
+-          this.statusIndicator.classList.add('opacity-0');
+-          this.statusIndicator.classList.remove('opacity-100');
+-          
+-          // Hide completely after fade out
+-          setTimeout(() => {
+-            if (this.statusIndicator) {
+-              this.statusIndicator.classList.add('invisible');
+-            }
+-          }, 200);
+-        }
+-      }, timeout);
+-    }
+-  }
+-
+-  /**
+-   * Loads messages from storage
+-   */
+-  async loadMessages() {
+-    try {
+-      // Try to load messages from chrome.storage.local
+-      const result = await new Promise((resolve) => {
+-        chrome.storage.local.get(['vibe_chat_history'], resolve);
+-      });
+-      
+-      if (result && result.vibe_chat_history) {
+-        this.messageHistory = result.vibe_chat_history;
+-        
+-        // Clear existing messages
+-        this.messagesContainer.innerHTML = '';
+-        
+-        // Add each message to the UI
+-        this.messageHistory.forEach(msg => {
+-          this.addMessage(msg.type, msg.content, { 
+-            isHtml: msg.isHtml || false 
+-          });
+-        });
+-        
+-        console.log('📝 [SIDE-PANEL] [sidepanel.js] Loaded', this.messageHistory.length, 'messages from storage');
+-      }
+-    } catch (error) {
+-      console.error('❌ [SIDE-PANEL] [sidepanel.js] Error loading messages:', error);
+-    }
+-  }
+-  
+-  /**
+-   * Saves messages to storage
+-   */
+-  async saveMessages() {
+-    try {
+-      // Only keep the last 100 messages to prevent storage issues
+-      const messagesToSave = this.messageHistory.slice(-100);
+-      
+-      await new Promise((resolve) => {
+-        chrome.storage.local.set({ vibe_chat_history: messagesToSave }, resolve);
+-      });
+-      
+-      console.log('💾 [SIDE-PANEL] [sidepanel.js] Saved', messagesToSave.length, 'messages to storage');
+-    } catch (error) {
+-      console.error('❌ [SIDE-PANEL] [sidepanel.js] Error saving messages:', error);
+-    }
+-  }
+-
+-  /**
+-   * Updates the quick action suggestions
+-   * @param {Array} suggestions - Array of suggestion objects with text and optional command
+-   */
+-  updateSuggestions(suggestions) {
+-    if (!this.quickActionsContainer) return;
+-    
+-    console.log("💡 [SIDE-PANEL] [sidepanel.js] Updating suggestions:", suggestions);
+-    
+-    // Clear existing suggestions
+-    this.quickActionsContainer.innerHTML = '';
+-    
+-    if (!suggestions || suggestions.length === 0) {
+-      // Hide suggestions if empty
+-      this.quickActionsContainer.classList.add('hidden');
+-      return;
+-    }
+-    
+-    // Create title
+-    const title = document.createElement('h3');
+-    title.className = 'text-sm font-medium text-gray-500 dark:text-gray-400 mb-2';
+-    title.textContent = 'Suggested Actions';
+-    this.quickActionsContainer.appendChild(title);
+-    
+-    // Create buttons container
+-    const buttonsContainer = document.createElement('div');
+-    buttonsContainer.className = 'flex flex-wrap gap-2';
+-    
+-    // Add each suggestion as a button
+-    suggestions.forEach(suggestion => {
+-      const button = document.createElement('button');
+-      button.className = 'px-3 py-1.5 text-sm font-medium rounded-full bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors';
+-      
+-      // Set button text and click handler
+-      button.textContent = typeof suggestion === 'object' ? (suggestion.text || suggestion.command) : suggestion;
+-      
+-      button.addEventListener('click', () => {
+-        const command = typeof suggestion === 'object' ? (suggestion.command || suggestion.text) : suggestion;
+-        this.messageInput.value = command;
+-        this.sendMessage();
+-      });
+-      
+-      // Add icon if provided
+-      if (suggestion.icon) {
+-        const icon = document.createElement('span');
+-        icon.className = `mr-2 ${suggestion.icon}`;
+-        button.prepend(icon);
+-      }
+-      
+-      buttonsContainer.appendChild(button);
+-    });
+-    
+-    this.quickActionsContainer.appendChild(buttonsContainer);
+-    this.quickActionsContainer.classList.remove('hidden');
+-    
+-    console.log('💡 [SIDE-PANEL] [sidepanel.js] Updated quick actions with', suggestions.length, 'suggestions');
+-  }
+-
+-  /**
+-   * Handles messages from the background script
+-   * @param {Object} message - The message object
+-   * @param {MessageSender} sender - The sender of the message
+-   * @param {Function} sendResponse - Function to send a response
+-   * @returns {boolean|undefined} True if using sendResponse asynchronously
+-   */
+-  handleBackgroundMessage(message, sender, sendResponse) {
+-    if (!message || !message.type) {
+-      console.warn("⚠️ [SIDE-PANEL] [sidepanel.js] Received invalid message:", message);
+-      return;
+-    }
+-    
+-    console.log(`📨 [SIDE-PANEL] [sidepanel.js] Received message type: ${message.type}`, message);
+-    
+-    try {
+-      switch (message.type) {
+-        case "omniboxQuery":
+-          this.handleOmniboxQuery(message.query);
+-          break;
+-          
+-        case "commandResult":
+-          this.addMessage("agent", message.result || 'Operation completed successfully');
+-          this.setProcessing(false);
+-          break;
+-          
+-        case "commandError":
+-          this.addMessage("agent", `❌ Error: ${message.error || 'An unknown error occurred'}`);
+-          this.setProcessing(false);
+-          break;
+-          
+-        case "updateSuggestions":
+-          this.updateSuggestions(message.suggestions || []);
+-          break;
+-          
+-        case "STATUS_UPDATE":
+-          this._handleStatusUpdate(message);
+-          break;
+-          
+-        case "TOOL_UPDATE":
+-          this._handleToolUpdate(message);
+-          break;
+-          
+-        case "REASONING_UPDATE":
+-          this._handleReasoningUpdate(message);
+-          break;
+-          
+-        case "USER_QUESTION":
+-          this._handleUserQuestion(message, sendResponse);
+-          return true; // Keep message channel open for response
+-          
+-        case "displayQuestion":
+-          this._askUserQuestion(message.question, message.context, sendResponse);
+-          return true; // Keep message channel open for response
+-          
+-        case "displayOptions":
+-          this._showUserOptions(message.message, message.options, message.context, sendResponse);
+-          return true; // Keep message channel open for response
+-          
+-        case "displayConfirmation":
+-          this._requestUserConfirmation(message.action, message.details, message.price, sendResponse);
+-          return true; // Keep message channel open for response
+-          
+-        case "setProcessing":
+-          this.setProcessing(!!message.processing);
+-          break;
+-          
+-        case "addMessage":
+-          this.addMessage(
+-            message.messageType || 'system',
+-            message.content || '',
+-            { isHtml: !!message.isHtml }
+-          );
+-          break;
+-          
+-        case "clearChat":
+-          this.clearChat();
+-          break;
+-          
+-        default:
+-          console.warn("⚠️ [SIDE-PANEL] [sidepanel.js] Unhandled message type:", message.type);
+-      }
+-    } catch (error) {
+-      console.error("❌ [SIDE-PANEL] [sidepanel.js] Error handling message:", error, message);
+-      
+-      // Show error to user if we have a message container
+-      if (this.messagesContainer) {
+-        this.addMessage('system', `Error: ${error.message || 'An unknown error occurred'}`);
+-      }
+-      
+-      // If we have a sendResponse function, send the error
+-      if (typeof sendResponse === 'function') {
+-        sendResponse({ success: false, error: error.message || 'Unknown error' });
+-      }
+-    }
+-  }
+-  
+-  /**
+-   * Handles status update messages
+-   * @param {Object} message - The status update message
+-   * @private
+-   */
+-  _handleStatusUpdate(message) {
+-    if (!message.data) return;
+-    
+-    console.log('📊 [SIDE-PANEL] [sidepanel.js] Processing status update:', JSON.stringify(message.data));
+-    
+-    switch (message.data.type) {
+-      case 'USER_QUERY':
+-        // Only add user messages that come from other sources (like omnibox)
+-        if (message.data.source && message.data.source !== 'sidepanel') {
+-          this.addMessage("user", message.data.message);
+-        }
+-        break;
+-        
+-      case 'PROCESSING':
+-        this.addMessage("system", `🔄 ${message.data.message || 'Processing...'}`);
+-        this.setProcessing(true);
+-        break;
+-        
+-      case 'COMPLETED':
+-        if (message.data.result) {
+-          // Display individual tool results, especially reasoning/thinking
+-          if (message.data.result.toolResults && Array.isArray(message.data.result.toolResults)) {
+-            this._processToolResults(message.data.result.toolResults);
+-          }
+-          
+-          // Display final response if available
+-          if (message.data.result.response) {
+-            this.addMessage("agent", message.data.result.response);
+-          } else if (!message.data.result.success) {
+-            this.addMessage("agent", `❌ ${message.data.result.error || 'Operation failed'}`);
+-          }
+-        }
+-        this.setProcessing(false);
+-        break;
+-        
+-      case 'ERROR':
+-        this.addMessage("system", `❌ ${message.data.error || 'An error occurred'}`);
+-        this.setProcessing(false);
+-        break;
+-        
+-      default:
+-        console.warn('⚠️ [SIDE-PANEL] [sidepanel.js] Unknown status type:', message.data.type);
+-    }
+-  }
+-  
+-  /**
+-   * Processes tool results and adds appropriate messages
+-   * @param {Array} toolResults - Array of tool result objects
+-   * @private
+-   */
+-  _processToolResults(toolResults) {
+-    try {
+-      toolResults.forEach(toolResult => {
+-        // Update tool indicator to show current tool
+-        if (toolResult.tool && this.isProcessing) {
+-          this.updateToolIndicator(`Using ${this._getToolDisplayName(toolResult.tool)}...`);
+-        }
+-        
+-        if (toolResult.tool === 'reasoning' && toolResult.args) {
+-          // Display thinking process
+-          if (toolResult.args.thinking) {
+-            this.addMessage("agent", `💭 **Thinking**: ${toolResult.args.thinking}`);
+-          }
+-          if (toolResult.args.evaluation) {
+-            this.addMessage("agent", `📊 **Evaluation**: ${toolResult.args.evaluation}`);
+-          }
+-          if (toolResult.args.next_goal) {
+-            this.addMessage("agent", `🎯 **Next Goal**: ${toolResult.args.next_goal}`);
+-          }
+-        } else if (toolResult.tool !== 'reasoning') {
+-          // Display other tool results briefly
+-          const result = toolResult.result;
+-          if (result && !result.error) {
+-            this.addMessage("system", `🔧 ${this._getToolDisplayName(toolResult.tool)}: ${typeof result === 'string' ? result : 'Success'}`);
+-          } else if (result && result.error) {
+-            this.addMessage("system", `❌ ${this._getToolDisplayName(toolResult.tool)}: ${result.error}`);
+-          }
+-        }
+-      });
+-    } catch (error) {
+-      console.error("❌ [SIDE-PANEL] [sidepanel.js] Error in _processToolResults:", error);
+-      this.addMessage("system", `❌ Error processing tool results: ${error.message || 'Unknown error'}`);
+-    }
+-  }
+-
+-  /**
+-   * Handles user questions from the LLM
+-   * @param {Object} message - The message object
+-   * @param {Function} sendResponse - Function to send a response
+-   * @private
+-   */
+-  _handleUserQuestion(message, sendResponse) {
+-    console.log('❓ [SIDE-PANEL] Handling user question:', message.question);
+-
+-    // Add the question as an agent message
+-    this.addMessage("agent", `❓ ${message.question}`);
+-
+-    // Store the request info for when user responds
+-    this.pendingQuestionRequest = {
+-      requestId: message.requestId,
+-      sendResponse: sendResponse
+-    };
+-
+-    // Update status to show we're waiting for user input
+-    this.updateStatus("waiting", "Waiting for your response...");
+-
+-    // Acknowledge receipt
+-    sendResponse({ success: true });
+-
+-    return true;
+-  }
+-
+-
+-  /**
+-   * Remove emojis from text content
+-   */
+-  /**
+-   * Handle tool update messages
+-   * @param {Object} message - The tool update message
+-   * @private
+-   */
+-  _handleToolUpdate(message) {
+-    console.log('🔧 [SIDE-PANEL] Tool update received:', message);
+-    
+-    if (message.tool && this.isProcessing) {
+-      // Update the tool indicator in the thinking display
+-      this.updateToolIndicator(message.message || `Using ${this._getToolDisplayName(message.tool)}...`);
+-      
+-      // Show tool details if available
+-      if (message.details && (message.details.error || message.details.success)) {
+-        const statusIcon = message.details.error ? '❌' : message.details.success ? '✅' : '🔧';
+-        const toolMessage = message.details.error 
+-          ? `${statusIcon} ${this._getToolDisplayName(message.tool)}: ${message.details.error}`
+-          : `${statusIcon} ${this._getToolDisplayName(message.tool)}: Success`;
+-        
+-        // Only show significant tool results (errors or important completions)
+-        if (message.details.error || message.tool === 'reasoning') {
+-          this.addMessage("system", toolMessage);
+-        }
+-      }
+-    }
+-  }
+-
+-  /**
+-   * Handle reasoning update messages
+-   * @param {Object} message - The reasoning update message
+-   * @private
+-   */
+-  _handleReasoningUpdate(message) {
+-    console.log('🧠 [SIDE-PANEL] Reasoning update received:', message);
+-    
+-    if (message.reasoning && message.reasoning.trim()) {
+-      // Show AI reasoning as agent message
+-      const reasoningText = `💭 **Iteration ${message.iteration}**: ${message.reasoning}`;
+-      this.addMessage("agent", reasoningText);
+-    }
+-  }
+-
+-  /**
+-   * Get display name for tools
+-   * @param {string} toolName - Internal tool name
+-   * @returns {string} Display name
+-   * @private
+-   */
+-  _getToolDisplayName(toolName) {
+-    const toolNames = {
+-      'clickElement': 'Click Element',
+-      'fillInput': 'Fill Input',
+-      'getPageContent': 'Get Page Content',
+-      'scrollPage': 'Scroll Page',
+-      'navigateToUrl': 'Navigate to URL',
+-      'takeScreenshot': 'Take Screenshot',
+-      'reasoning': 'Reasoning',
+-      'webSearch': 'Web Search',
+-      'readFile': 'Read File',
+-      'writeFile': 'Write File'
+-    };
+-    return toolNames[toolName] || toolName;
+-  }
+-
+-  removeEmojis(text) {
+-    // Remove common emojis used in the system
+-    return text.replace(/[🚀🔧📊❌✅⏳💭🎯🔍⚠️📸📝🌐✨📋❓]/g, '')
+-               .replace(/\s+/g, ' ')
+-               .trim();
+-  }
+-
+-  /**
+-   * Show thinking indicator
+-   * @param {string} toolName - Name of the current tool being used
+-   */
+-  showThinking(toolName = 'Thinking...') {
+-    this.thinkingStartTime = Date.now();
+-    this.currentTool = toolName;
+-    
+-    const thinkingEl = document.importNode(this.thinkingTemplate, true).firstElementChild;
+-    const durationSpan = thinkingEl.querySelector('.thinking-duration');
+-    const toolNameSpan = thinkingEl.querySelector('.tool-name');
+-    
+-    // Set initial tool name
+-    if (toolNameSpan) {
+-      toolNameSpan.textContent = toolName;
+-    }
+-    
+-    // Update duration every second
+-    const updateDuration = () => {
+-      if (this.thinkingStartTime) {
+-        const seconds = Math.floor((Date.now() - this.thinkingStartTime) / 1000);
+-        if (durationSpan) {
+-          durationSpan.textContent = seconds;
+-        }
+-      }
+-    };
+-    
+-    this.thinkingInterval = setInterval(updateDuration, 1000);
+-    
+-    this.messagesContainer.appendChild(thinkingEl);
+-    this.currentThinkingElement = thinkingEl;
+-    this.scrollToBottom();
+-  }
+-
+-  /**
+-   * Update the current tool being used
+-   * @param {string} toolName - Name of the tool
+-   */
+-  updateToolIndicator(toolName) {
+-    this.currentTool = toolName;
+-    if (this.currentThinkingElement) {
+-      const toolNameSpan = this.currentThinkingElement.querySelector('.tool-name');
+-      if (toolNameSpan) {
+-        toolNameSpan.textContent = toolName;
+-      }
+-    }
+-  }
+-
+-  /**
+-   * Hide thinking indicator
+-   */
+-  hideThinking() {
+-    if (this.thinkingInterval) {
+-      clearInterval(this.thinkingInterval);
+-      this.thinkingInterval = null;
+-    }
+-    
+-    if (this.currentThinkingElement) {
+-      this.currentThinkingElement.remove();
+-      this.currentThinkingElement = null;
+-    }
+-    
+-    this.thinkingStartTime = null;
+-    this.currentTool = null;
+-  }
+-
+-}
+-
+-// Initialize the side panel when the DOM is fully loaded
+-document.addEventListener('DOMContentLoaded', () => {
+-  window.vibeSidePanel = new VibeAISidePanel();
+-});
+-
+-// Make available globally for debugging
+-window.VibeAISidePanel = VibeAISidePanel;
+\ No newline at end of file
+diff --git a/chrome/browser/resources/vibe/sidepanel.css b/chrome/browser/resources/vibe/sidepanel.css
+deleted file mode 100644
+index 84d435a507..0000000000
+--- a/chrome/browser/resources/vibe/sidepanel.css
++++ /dev/null
+@@ -1,129 +0,0 @@
+-@tailwind base;
+-@tailwind components;
+-@tailwind utilities;
+-
+-@layer base {
+-  * {
+-    box-sizing: border-box;
+-  }
+-
+-  html, body, #root {
+-    @apply h-full w-full m-0 p-0;
+-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+-  }
+-
+-  body {
+-    @apply antialiased;
+-  }
+-}
+-
+-@layer components {
+-  /* Custom scrollbar */
+-  .messages-container {
+-    scrollbar-width: thin;
+-    scrollbar-color: rgba(156, 163, 175, 0.3) transparent;
+-  }
+-
+-  .messages-container::-webkit-scrollbar {
+-    width: 6px;
+-  }
+-
+-  .messages-container::-webkit-scrollbar-track {
+-    background: transparent;
+-  }
+-
+-  .messages-container::-webkit-scrollbar-thumb {
+-    @apply bg-gray-300 rounded-full;
+-  }
+-
+-  .messages-container::-webkit-scrollbar-thumb:hover {
+-    @apply bg-gray-400;
+-  }
+-
+-  /* Input area auto-resize */
+-  .message-input {
+-    field-sizing: content;
+-  }
+-
+-  /* Message content styling */
+-  .message-content {
+-    line-height: 1.6;
+-  }
+-
+-  .message-content p {
+-    @apply mb-2 last:mb-0;
+-  }
+-
+-  .message-content pre {
+-    @apply bg-gray-900 text-gray-100 p-3 rounded-lg overflow-x-auto text-sm my-2;
+-  }
+-
+-  .message-content code {
+-    @apply bg-gray-100 text-gray-800 px-1.5 py-0.5 rounded text-sm;
+-  }
+-
+-  .message-content pre code {
+-    @apply bg-transparent text-gray-100 p-0;
+-  }
+-
+-  .message-content ul, .message-content ol {
+-    @apply pl-5 mb-2;
+-  }
+-
+-  .message-content li {
+-    @apply mb-1;
+-  }
+-
+-  .message-content blockquote {
+-    @apply border-l-4 border-gray-300 pl-4 italic text-gray-600 my-2;
+-  }
+-
+-  .message-content h1, .message-content h2, .message-content h3, .message-content h4, .message-content h5, .message-content h6 {
+-    @apply font-semibold mt-4 mb-2;
+-  }
+-
+-  .message-content h1 {
+-    @apply text-xl;
+-  }
+-
+-  .message-content h2 {
+-    @apply text-lg;
+-  }
+-
+-  .message-content h3 {
+-    @apply text-base;
+-  }
+-
+-  /* Processing animation */
+-  @keyframes pulse {
+-    0%, 100% {
+-      opacity: 0.4;
+-    }
+-    50% {
+-      opacity: 1;
+-    }
+-  }
+-
+-  .animate-pulse {
+-    animation: pulse 1.5s ease-in-out infinite;
+-  }
+-
+-  /* Focus states */
+-  .focus-within\:border-gray-300:focus-within {
+-    border-color: #d1d5db;
+-  }
+-
+-  /* Button states */
+-  .send-button-enabled {
+-    @apply bg-green-600 hover:bg-green-700 text-white;
+-  }
+-
+-  .send-button-enabled svg {
+-    @apply text-white;
+-  }
+-
+-  /* Smooth transitions */
+-  * {
+-    @apply transition-colors duration-200;
+-  }
+-}
+\ No newline at end of file
+diff --git a/chrome/browser/resources/vibe/sidepanel.js b/chrome/browser/resources/vibe/sidepanel.js
+deleted file mode 100644
+index c287a905e9..0000000000
+--- a/chrome/browser/resources/vibe/sidepanel.js
++++ /dev/null
+@@ -1,1059 +0,0 @@
+-// @ts-nocheck
+-
+-/**
+- * Vibe AI Agent Side Panel
+- * Main UI for AI agent interaction and control
+- */
+-
+-class VibeAISidePanel {
+-  constructor() {
+-    // Main containers
+-    this.messagesContainer = document.querySelector(".messages-container");
+-    this.messageInput = document.getElementById("messageInput");
+-    this.sendButton = document.getElementById("sendButton");
+-    this.welcomeMessage = document.getElementById("welcomeMessage");
+-    
+-    // State
+-    this.isProcessing = false;
+-    this.messageHistory = [];
+-    this.currentOperationId = null;
+-    this.pendingQuestionRequest = null;
+-    this.thinkingStartTime = null;
+-    this.currentTool = null;
+-    
+-    // Templates
+-    this.userMessageTemplate = document.getElementById("userMessageTemplate").content;
+-    this.assistantMessageTemplate = document.getElementById("assistantMessageTemplate").content;
+-    this.systemMessageTemplate = document.getElementById("systemMessageTemplate").content;
+-    this.thinkingTemplate = document.getElementById("thinkingTemplate").content;
+-    
+-    this.initialize();
+-  }
+-  
+-  initialize() {
+-    console.log("Initializing Vibe AI Side Panel...");
+-    
+-    // Set up dark mode detection
+-    this.setupDarkMode();
+-    
+-    // Initialize event listeners
+-    this.initializeEventListeners();
+-    
+-    // Set up message input auto-resize
+-    this.setupMessageInput();
+-    
+-    // Listen for messages from background script
+-    chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+-      const result = this.handleBackgroundMessage(message, sender, sendResponse);
+-      if (!result) {
+-        sendResponse({ success: true });
+-      }
+-      return result; // Keep channel open if needed
+-    });
+-    
+-    // Update status
+-    this.updateStatus("ready", "Ready");
+-    
+-    // Load any existing messages from storage
+-    this.loadMessages();
+-    
+-    console.log("✅ [SIDE-PANEL] [sidepanel.js] Vibe AI Side Panel initialized");
+-  }
+-  
+-  initializeEventListeners() {
+-    // Send message on button click or Enter key (but allow Shift+Enter for new lines)
+-    this.sendButton.addEventListener("click", () => this.sendMessage());
+-    this.messageInput.addEventListener("keydown", (e) => {
+-      if (e.key === "Enter" && !e.shiftKey) {
+-        e.preventDefault();
+-        this.sendMessage();
+-      }
+-    });
+-    
+-    // Stop button
+-    if (this.stopButton) {
+-      this.stopButton.addEventListener("click", () => this.stopProcessing());
+-    }
+-    
+-    // Theme toggle
+-    if (this.themeToggle) {
+-      this.themeToggle.addEventListener("click", () => this.toggleDarkMode());
+-    }
+-    
+-    // Keyboard shortcut: Cmd/Ctrl + E to focus input
+-    document.addEventListener("keydown", (e) => {
+-      if ((e.ctrlKey || e.metaKey) && e.key === "e") {
+-        e.preventDefault();
+-        this.messageInput.focus();
+-      }
+-    });
+-  }
+-  
+-  setupMessageInput() {
+-    // Auto-resize textarea as user types
+-    this.messageInput.addEventListener('input', () => {
+-      this.messageInput.style.height = 'auto';
+-      this.messageInput.style.height = Math.min(this.messageInput.scrollHeight, 200) + 'px';
+-    });
+-    
+-    // Focus the input when the panel is opened
+-    this.messageInput.focus();
+-  }
+-  
+-  setupDarkMode() {
+-    // Check for saved preference or system preference
+-    const savedTheme = localStorage.getItem('vibe-theme');
+-    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+-    
+-    if (savedTheme === 'dark' || (!savedTheme && prefersDark)) {
+-      this.enableDarkMode();
+-    } else {
+-      this.disableDarkMode();
+-    }
+-  }
+-  
+-  toggleDarkMode() {
+-    if (document.documentElement.classList.contains('dark')) {
+-      this.disableDarkMode();
+-    } else {
+-      this.enableDarkMode();
+-    }
+-  }
+-  
+-  enableDarkMode() {
+-    document.documentElement.classList.add('dark');
+-    localStorage.setItem('vibe-theme', 'dark');
+-    this.isDarkMode = true;
+-    this.updateThemeIcon(true);
+-  }
+-  
+-  disableDarkMode() {
+-    document.documentElement.classList.remove('dark');
+-    localStorage.setItem('vibe-theme', 'light');
+-    this.isDarkMode = false;
+-    this.updateThemeIcon(false);
+-  }
+-  
+-  updateThemeIcon(isDark) {
+-    if (!this.themeIcon) return;
+-    
+-    // Update the icon based on theme
+-    if (isDark) {
+-      // Moon icon for dark mode
+-      this.themeIcon.innerHTML = `
+-        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+-      `;
+-    } else {
+-      // Sun icon for light mode
+-      this.themeIcon.innerHTML = `
+-        <circle cx="12" cy="12" r="5"></circle>
+-        <line x1="12" y1="1" x2="12" y2="3"></line>
+-        <line x1="12" y1="21" x2="12" y2="23"></line>
+-        <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+-        <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+-        <line x1="1" y1="12" x2="3" y2="12"></line>
+-        <line x1="21" y1="12" x2="23" y2="12"></line>
+-        <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+-        <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+-      `;
+-    }
+-  }
+-  
+-  /**
+-   * Handles sending a message
+-   * @param {string} [customMessage] - Optional custom message to send
+-   */
+-  async sendMessage(customMessage) {
+-    try {
+-      const message = customMessage || this.messageInput.value.trim();
+-      if (!message) return;
+-      
+-      // Check if we have a pending question request
+-      if (this.pendingQuestionRequest) {
+-        const response = {
+-          requestId: this.pendingQuestionRequest.requestId,
+-          response: message,
+-          timestamp: new Date().toISOString()
+-        };
+-        
+-        // Add user message to chat
+-        this.addMessage('user', message);
+-        
+-        // Clear input if this was from the input field
+-        if (!customMessage) {
+-          this.messageInput.value = '';
+-          this.messageInput.style.height = 'auto'; // Reset input height
+-        }
+-        
+-        // Send response back to background script
+-        await new Promise((resolve) => {
+-          chrome.runtime.sendMessage({
+-            type: 'USER_QUESTION_RESPONSE',
+-            response
+-          }, resolve);
+-        });
+-        
+-        // Clear pending question and update status
+-        this.pendingQuestionRequest = null;
+-        this.updateStatus('Response sent', 'success');
+-        return;
+-      }
+-      
+-      // Normal message handling - check if processing
+-      if (this.isProcessing) return;
+-      
+-      // Add user message to chat
+-      this.addMessage('user', message);
+-      
+-      // Clear input if this was from the input field
+-      if (!customMessage) {
+-        this.messageInput.value = '';
+-        this.messageInput.style.height = 'auto'; // Reset input height
+-      }
+-      
+-      // Show loading indicator and auto-scroll
+-      this.setProcessing(true);
+-      this.scrollToBottom({ behavior: 'smooth' });
+-      
+-      // Generate operation ID
+-      this.currentOperationId = `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+-      
+-      console.log('🔍 [SIDE-PANEL] [sidepanel.js] Checking navigator.vibeBrowser:', !!navigator.vibeBrowser);
+-      console.log('🔍 [SIDE-PANEL] [sidepanel.js] Checking processAIPrompt:', !!(navigator.vibeBrowser?.processAIPrompt));
+-      
+-      // Try using C++ API if available, otherwise fall back to extension messaging
+-      if (navigator.vibeBrowser?.processAIPrompt) {
+-        // Use the C++ API directly
+-        console.log('🔧 [SIDE-PANEL] [sidepanel.js] Using C++ API for processing');
+-        const result = await navigator.vibeBrowser.processAIPrompt(message);
+-        if (result && result.success) {
+-          this.addMessage("agent", result.result || "AI processed successfully");
+-        } else {
+-          this.addMessage("agent", result?.error || "AI processing failed");
+-        }
+-      } else {
+-        // Fallback: Send to background script for processing
+-        console.log('🔧 [SIDE-PANEL] [sidepanel.js] Using extension background script for processing');
+-        chrome.runtime.sendMessage({
+-          type: "processCommand",
+-          command: message,
+-          source: "sidepanel",
+-          operationId: this.currentOperationId
+-        }, (response) => {
+-          // Handle the response with tool results
+-          if (chrome.runtime.lastError) {
+-            console.error("❌ [SIDE-PANEL] [sidepanel.js] Runtime error:", chrome.runtime.lastError);
+-            this.addMessage("agent", `Error: ${chrome.runtime.lastError.message}`);
+-            this.setProcessing(false);
+-            return;
+-          }
+-          
+-          if (response && response.success) {
+-            // Display individual tool results first
+-            if (response.toolResults && Array.isArray(response.toolResults)) {
+-              response.toolResults.forEach(toolResult => {
+-                if (toolResult.tool === 'reasoning' && toolResult.args) {
+-                  // Display thinking process
+-                  if (toolResult.args.thinking) {
+-                    this.addMessage("agent", `💭 **Thinking**: ${toolResult.args.thinking}`);
+-                  }
+-                  if (toolResult.args.evaluation) {
+-                    this.addMessage("agent", `📊 **Evaluation**: ${toolResult.args.evaluation}`);
+-                  }
+-                  if (toolResult.args.next_goal) {
+-                    this.addMessage("agent", `🎯 **Next Goal**: ${toolResult.args.next_goal}`);
+-                  }
+-                } else if (toolResult.tool !== 'reasoning') {
+-                  // Display other tool results with enhanced formatting
+-                  const result = toolResult.result;
+-                  if (result && !result.error) {
+-                    const resultText = typeof result === 'string' ? result : 'Success';
+-                    this.addMessage("system", `🔧 **${toolResult.tool}**: ${resultText}`);
+-                  } else if (result && result.error) {
+-                    this.addMessage("system", `❌ **${toolResult.tool}**: ${result.error}`);
+-                  }
+-                }
+-              });
+-            }
+-            
+-            // Display final response
+-            this.addMessage("agent", response.response || 'Task completed');
+-          } else {
+-            this.addMessage("agent", `❌ ${response?.error || response?.response || 'Unknown error'}`);
+-          }
+-          
+-          this.setProcessing(false);
+-        });
+-      }
+-    } catch (error) {
+-      console.error("❌ [SIDE-PANEL] [sidepanel.js] Error sending message:", error);
+-      this.addMessage("agent", `Error: ${error.message}`);
+-      this.setProcessing(false);
+-    }
+-    // Note: We don't call setProcessing(false) here anymore
+-    // as it will be handled by the message listener
+-  }
+-  
+-  /**
+-   * Adds a message to the chat with proper styling
+-   * @param {string} type - 'user', 'agent', or 'system'
+-   * @param {string} content - The message content (can include markdown)
+-   * @param {Object} options - Additional options
+-   * @param {boolean} options.isHtml - Whether the content is already HTML
+-   * @returns {HTMLElement} The created message element
+-   */
+-  addMessage(type, content, options = {}) {
+-    // Hide welcome message when first message is added
+-    if (this.welcomeMessage && !this.welcomeMessage.classList.contains('hidden')) {
+-      this.welcomeMessage.classList.add('hidden');
+-    }
+-    
+-    let messageEl, messageContent;
+-    
+-    // Select the appropriate template based on message type
+-    if (type === 'user') {
+-      messageEl = document.importNode(this.userMessageTemplate, true).firstElementChild;
+-      messageContent = messageEl.querySelector('.message-content');
+-    } else if (type === 'system') {
+-      messageEl = document.importNode(this.systemMessageTemplate, true).firstElementChild;
+-      messageContent = messageEl.querySelector('.message-content');
+-    } else { // 'agent' or 'assistant'
+-      messageEl = document.importNode(this.assistantMessageTemplate, true).firstElementChild;
+-      messageContent = messageEl.querySelector('.message-content');
+-    }
+-    
+-    // Convert markdown to HTML if needed and remove emojis for user messages
+-    const htmlContent = options.isHtml ? content : this.markdownToHtml(content);
+-    const cleanContent = type === 'user' ? this.removeEmojis(htmlContent) : htmlContent;
+-    messageContent.innerHTML = this.sanitizeHtml(cleanContent);
+-    
+-    // Add to message history
+-    this.messageHistory.push({ type, content, timestamp: Date.now() });
+-    
+-    // Add message to container
+-    this.messagesContainer.appendChild(messageEl);
+-    this.scrollToBottom();
+-    
+-    return messageEl;
+-  }
+-  
+-  /**
+-   * Converts markdown to HTML
+-   * @param {string} markdown - Markdown text to convert
+-   * @returns {string} HTML string
+-   */
+-  markdownToHtml(markdown) {
+-    // Simple markdown to HTML conversion
+-    // In a real app, you might want to use a library like marked.js
+-    return markdown
+-      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>') // Bold
+-      .replace(/\*(.*?)\*/g, '<em>$1</em>') // Italic
+-      .replace(/^### (.*$)/gm, '<h3 class="text-lg font-semibold mt-4 mb-2">$1</h3>') // Headers
+-      .replace(/^## (.*$)/gm, '<h2 class="text-xl font-bold mt-5 mb-3">$1</h2>')
+-      .replace(/^# (.*$)/gm, '<h1 class="text-2xl font-bold mt-6 mb-4">$1</h1>')
+-      .replace(/\n/g, '<br>') // Line breaks
+-      .replace(/`([^`]+)`/g, '<code class="bg-gray-100 dark:bg-gray-700 px-1 py-0.5 rounded text-sm">$1</code>') // Inline code
+-      .replace(/```(?:\w+\n)?([\s\S]*?)```/g, 
+-        '<pre class="bg-gray-100 dark:bg-gray-800 p-3 rounded-md overflow-x-auto my-2"><code class="block whitespace-pre">$1</code></pre>') // Code blocks
+-      .replace(/\[([^\]]+)\]\(([^)]+)\)/g, 
+-        '<a href="$2" target="_blank" rel="noopener noreferrer" class="text-blue-600 dark:text-blue-400 hover:underline">$1</a>'); // Links
+-  }
+-  
+-  /**
+-   * Sanitizes HTML to prevent XSS while preserving basic formatting
+-   * @param {string} html - HTML to sanitize
+-   * @returns {string} Sanitized HTML
+-   */
+-  sanitizeHtml(html) {
+-    // Simple sanitization - in production use DOMPurify or similar
+-    const temp = document.createElement('div');
+-    temp.innerHTML = html;
+-    
+-    // Remove script tags and other dangerous elements
+-    const scripts = temp.querySelectorAll('script');
+-    scripts.forEach(script => script.remove());
+-    
+-    return temp.innerHTML;
+-  }
+-  
+-  /**
+-   * Shows a loading indicator while waiting for a response
+-   * @returns {HTMLElement} The loading element
+-   */
+-  showLoading() {
+-    // If loading indicator already exists, just make it visible
+-    if (this.loadingIndicator) {
+-      this.loadingIndicator.classList.remove('hidden');
+-      return this.loadingIndicator;
+-    }
+-    
+-    // Create loading indicator from template
+-    this.loadingIndicator = document.importNode(this.loaderTemplate, true).firstElementChild;
+-    
+-    // Add to messages container
+-    this.messagesContainer.appendChild(this.loadingIndicator);
+-    
+-    // Scroll to show the loading indicator
+-    this.scrollToBottom({ behavior: 'smooth', delay: 100 });
+-    
+-    return this.loadingIndicator;
+-  }
+-  
+-  /**
+-   * Hides the loading indicator with a fade-out effect
+-   */
+-  hideLoading() {
+-    if (!this.loadingIndicator) return;
+-    
+-    // Add fade-out class and remove after animation completes
+-    this.loadingIndicator.classList.add('opacity-0', 'transition-opacity', 'duration-300');
+-    
+-    // Remove the element after the fade-out animation completes
+-    setTimeout(() => {
+-      if (this.loadingIndicator && this.loadingIndicator.parentNode) {
+-        this.loadingIndicator.parentNode.removeChild(this.loadingIndicator);
+-        this.loadingIndicator = null;
+-      }
+-    }, 300);
+-  }
+-  
+-  /**
+-   * Smoothly scrolls the messages container to the bottom
+-   * @param {Object} options - Scroll behavior options
+-   * @param {string} options.behavior - Scroll behavior ('smooth' or 'auto')
+-   * @param {number} options.delay - Delay in milliseconds before scrolling
+-   */
+-  scrollToBottom(options = { behavior: 'smooth', delay: 0 }) {
+-    if (!this.messagesContainer) return;
+-    
+-    const scroll = () => {
+-      this.messagesContainer.scrollTo({
+-        top: this.messagesContainer.scrollHeight,
+-        behavior: options.behavior
+-      });
+-    };
+-    
+-    if (options.delay > 0) {
+-      setTimeout(scroll, options.delay);
+-    } else {
+-      scroll();
+-    }
+-    
+-    // If we're near the bottom, stay scrolled to bottom when new messages arrive
+-    const isNearBottom = 
+-      this.messagesContainer.scrollHeight - this.messagesContainer.clientHeight - 
+-      this.messagesContainer.scrollTop < 100;
+-      
+-    if (isNearBottom) {
+-      requestAnimationFrame(() => {
+-        this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
+-      });
+-    }
+-  }
+-  
+-  /**
+-   * Sets the processing state of the UI
+-   * @param {boolean} processing - Whether processing is in progress
+-   */
+-  setProcessing(processing) {
+-    this.isProcessing = processing;
+-    
+-    // Update input and button states
+-    this.messageInput.disabled = processing;
+-    this.sendButton.disabled = processing || !this.messageInput.value.trim();
+-    
+-    // Update send button styling
+-    if (processing || !this.messageInput.value.trim()) {
+-      this.sendButton.className = "p-2 m-1 rounded-lg bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors";
+-    } else {
+-      this.sendButton.className = "p-2 m-1 rounded-lg bg-green-600 hover:bg-green-700 text-white transition-colors";
+-    }
+-    
+-    // Show/hide thinking indicator
+-    if (processing) {
+-      this.showThinking();
+-    } else {
+-      this.hideThinking();
+-    }
+-  }
+-
+-  /**
+-   * Stops the current processing operation
+-   */
+-  stopProcessing() {
+-    console.log("🛑 [SIDE-PANEL] [sidepanel.js] Stop button clicked");
+-    
+-    if (!this.isProcessing || !this.currentOperationId) {
+-      console.log("⚠️ [SIDE-PANEL] [sidepanel.js] No operation to stop");
+-      return;
+-    }
+-
+-    // Send stop message to background
+-    chrome.runtime.sendMessage({
+-      type: "stopOperation",
+-      operationId: this.currentOperationId,
+-      source: "sidepanel"
+-    });
+-
+-    // Add message and reset state
+-    this.addMessage("system", "🛑 Operation stopped by user");
+-    this.setProcessing(false);
+-    this.currentOperationId = null;
+-  }
+-  
+-  /**
+-   * Updates the status indicator with visual feedback
+-   * @param {string} status - The status message to display
+-   * @param {string} [type='info'] - Status type: 'info', 'success', 'warning', 'error', or 'processing'
+-   * @param {Object} [options] - Additional options
+-   * @param {number} [options.timeout=3000] - Auto-hide timeout in ms (0 to disable)
+-   * @param {boolean} [options.showDot=true] - Whether to show the status dot
+-   */
+-  updateStatus(status, type = 'info', options = {}) {
+-    if (!this.statusIndicator) return;
+-    
+-    const {
+-      timeout = type === 'info' ? 3000 : 0,
+-      showDot = true
+-    } = options;
+-    
+-    // Update status text
+-    const statusText = this.statusIndicator.querySelector('.status-text');
+-    if (statusText) {
+-      statusText.textContent = status || '';
+-      const statusTextClass = type === 'error' ? 'text-red-600 dark:text-red-400' :
+-        type === 'warning' ? 'text-yellow-600 dark:text-yellow-400' :
+-        type === 'success' ? 'text-green-600 dark:text-green-400' :
+-        'text-gray-600 dark:text-gray-400';
+-      statusText.className = `status-text text-xs font-medium ${statusTextClass} transition-colors duration-200`;
+-    }
+-    
+-    // Update status dot if enabled
+-    if (showDot) {
+-      const statusDot = this.statusIndicator.querySelector('.status-dot');
+-      if (statusDot) {
+-        // Remove all status classes
+-        const classesToRemove = [
+-          'bg-green-500', 'bg-yellow-500', 'bg-red-500', 'bg-blue-500', 'bg-gray-400',
+-          'ring-2', 'ring-offset-2', 'ring-green-500', 'ring-yellow-500', 'ring-red-500', 
+-          'ring-blue-500', 'ring-gray-400', 'animate-pulse', 'pulse'
+-        ];
+-        statusDot.classList.remove(...classesToRemove);
+-        
+-        // Add appropriate classes based on status type
+-        const dotClasses = ['w-2', 'h-2', 'rounded-full', 'transition-all', 'duration-300'];
+-        
+-        switch (type) {
+-          case 'success':
+-            dotClasses.push('bg-green-500', 'ring-2', 'ring-green-500/50');
+-            break;
+-          case 'warning':
+-            dotClasses.push('bg-yellow-500', 'ring-2', 'ring-yellow-500/50', 'animate-pulse');
+-            break;
+-          case 'error':
+-            dotClasses.push('bg-red-500', 'ring-2', 'ring-red-500/50', 'pulse');
+-            break;
+-          case 'processing':
+-            dotClasses.push('bg-blue-500', 'ring-2', 'ring-blue-500/50', 'pulse');
+-            break;
+-          default: // info
+-            dotClasses.push('bg-gray-400');
+-        }
+-        
+-        statusDot.className = `status-dot ${dotClasses.join(' ')}`;
+-      }
+-    }
+-    
+-    // Show status indicator with animation
+-    this.statusIndicator.classList.remove('opacity-0', 'invisible');
+-    this.statusIndicator.classList.add('opacity-100', 'transition-opacity', 'duration-200');
+-    
+-    // Auto-hide after delay if specified
+-    if (timeout > 0) {
+-      clearTimeout(this.statusTimeout);
+-      this.statusTimeout = setTimeout(() => {
+-        if (this.statusIndicator) {
+-          this.statusIndicator.classList.add('opacity-0');
+-          this.statusIndicator.classList.remove('opacity-100');
+-          
+-          // Hide completely after fade out
+-          setTimeout(() => {
+-            if (this.statusIndicator) {
+-              this.statusIndicator.classList.add('invisible');
+-            }
+-          }, 200);
+-        }
+-      }, timeout);
+-    }
+-  }
+-
+-  /**
+-   * Loads messages from storage
+-   */
+-  async loadMessages() {
+-    try {
+-      // Try to load messages from chrome.storage.local
+-      const result = await new Promise((resolve) => {
+-        chrome.storage.local.get(['vibe_chat_history'], resolve);
+-      });
+-      
+-      if (result && result.vibe_chat_history) {
+-        this.messageHistory = result.vibe_chat_history;
+-        
+-        // Clear existing messages
+-        this.messagesContainer.innerHTML = '';
+-        
+-        // Add each message to the UI
+-        this.messageHistory.forEach(msg => {
+-          this.addMessage(msg.type, msg.content, { 
+-            isHtml: msg.isHtml || false 
+-          });
+-        });
+-        
+-        console.log('📝 [SIDE-PANEL] [sidepanel.js] Loaded', this.messageHistory.length, 'messages from storage');
+-      }
+-    } catch (error) {
+-      console.error('❌ [SIDE-PANEL] [sidepanel.js] Error loading messages:', error);
+-    }
+-  }
+-  
+-  /**
+-   * Saves messages to storage
+-   */
+-  async saveMessages() {
+-    try {
+-      // Only keep the last 100 messages to prevent storage issues
+-      const messagesToSave = this.messageHistory.slice(-100);
+-      
+-      await new Promise((resolve) => {
+-        chrome.storage.local.set({ vibe_chat_history: messagesToSave }, resolve);
+-      });
+-      
+-      console.log('💾 [SIDE-PANEL] [sidepanel.js] Saved', messagesToSave.length, 'messages to storage');
+-    } catch (error) {
+-      console.error('❌ [SIDE-PANEL] [sidepanel.js] Error saving messages:', error);
+-    }
+-  }
+-
+-  /**
+-   * Updates the quick action suggestions
+-   * @param {Array} suggestions - Array of suggestion objects with text and optional command
+-   */
+-  updateSuggestions(suggestions) {
+-    if (!this.quickActionsContainer) return;
+-    
+-    console.log("💡 [SIDE-PANEL] [sidepanel.js] Updating suggestions:", suggestions);
+-    
+-    // Clear existing suggestions
+-    this.quickActionsContainer.innerHTML = '';
+-    
+-    if (!suggestions || suggestions.length === 0) {
+-      // Hide suggestions if empty
+-      this.quickActionsContainer.classList.add('hidden');
+-      return;
+-    }
+-    
+-    // Create title
+-    const title = document.createElement('h3');
+-    title.className = 'text-sm font-medium text-gray-500 dark:text-gray-400 mb-2';
+-    title.textContent = 'Suggested Actions';
+-    this.quickActionsContainer.appendChild(title);
+-    
+-    // Create buttons container
+-    const buttonsContainer = document.createElement('div');
+-    buttonsContainer.className = 'flex flex-wrap gap-2';
+-    
+-    // Add each suggestion as a button
+-    suggestions.forEach(suggestion => {
+-      const button = document.createElement('button');
+-      button.className = 'px-3 py-1.5 text-sm font-medium rounded-full bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors';
+-      
+-      // Set button text and click handler
+-      button.textContent = typeof suggestion === 'object' ? (suggestion.text || suggestion.command) : suggestion;
+-      
+-      button.addEventListener('click', () => {
+-        const command = typeof suggestion === 'object' ? (suggestion.command || suggestion.text) : suggestion;
+-        this.messageInput.value = command;
+-        this.sendMessage();
+-      });
+-      
+-      // Add icon if provided
+-      if (suggestion.icon) {
+-        const icon = document.createElement('span');
+-        icon.className = `mr-2 ${suggestion.icon}`;
+-        button.prepend(icon);
+-      }
+-      
+-      buttonsContainer.appendChild(button);
+-    });
+-    
+-    this.quickActionsContainer.appendChild(buttonsContainer);
+-    this.quickActionsContainer.classList.remove('hidden');
+-    
+-    console.log('💡 [SIDE-PANEL] [sidepanel.js] Updated quick actions with', suggestions.length, 'suggestions');
+-  }
+-
+-  /**
+-   * Handles messages from the background script
+-   * @param {Object} message - The message object
+-   * @param {MessageSender} sender - The sender of the message
+-   * @param {Function} sendResponse - Function to send a response
+-   * @returns {boolean|undefined} True if using sendResponse asynchronously
+-   */
+-  handleBackgroundMessage(message, sender, sendResponse) {
+-    if (!message || !message.type) {
+-      console.warn("⚠️ [SIDE-PANEL] [sidepanel.js] Received invalid message:", message);
+-      return;
+-    }
+-    
+-    console.log(`📨 [SIDE-PANEL] [sidepanel.js] Received message type: ${message.type}`, message);
+-    
+-    try {
+-      switch (message.type) {
+-        case "omniboxQuery":
+-          this.handleOmniboxQuery(message.query);
+-          break;
+-          
+-        case "commandResult":
+-          this.addMessage("agent", message.result || 'Operation completed successfully');
+-          this.setProcessing(false);
+-          break;
+-          
+-        case "commandError":
+-          this.addMessage("agent", `❌ Error: ${message.error || 'An unknown error occurred'}`);
+-          this.setProcessing(false);
+-          break;
+-          
+-        case "updateSuggestions":
+-          this.updateSuggestions(message.suggestions || []);
+-          break;
+-          
+-        case "STATUS_UPDATE":
+-          this._handleStatusUpdate(message);
+-          break;
+-          
+-        case "TOOL_UPDATE":
+-          this._handleToolUpdate(message);
+-          break;
+-          
+-        case "REASONING_UPDATE":
+-          this._handleReasoningUpdate(message);
+-          break;
+-          
+-        case "USER_QUESTION":
+-          this._handleUserQuestion(message, sendResponse);
+-          return true; // Keep message channel open for response
+-          
+-        case "displayQuestion":
+-          this._askUserQuestion(message.question, message.context, sendResponse);
+-          return true; // Keep message channel open for response
+-          
+-        case "displayOptions":
+-          this._showUserOptions(message.message, message.options, message.context, sendResponse);
+-          return true; // Keep message channel open for response
+-          
+-        case "displayConfirmation":
+-          this._requestUserConfirmation(message.action, message.details, message.price, sendResponse);
+-          return true; // Keep message channel open for response
+-          
+-        case "setProcessing":
+-          this.setProcessing(!!message.processing);
+-          break;
+-          
+-        case "addMessage":
+-          this.addMessage(
+-            message.messageType || 'system',
+-            message.content || '',
+-            { isHtml: !!message.isHtml }
+-          );
+-          break;
+-          
+-        case "clearChat":
+-          this.clearChat();
+-          break;
+-          
+-        default:
+-          console.warn("⚠️ [SIDE-PANEL] [sidepanel.js] Unhandled message type:", message.type);
+-      }
+-    } catch (error) {
+-      console.error("❌ [SIDE-PANEL] [sidepanel.js] Error handling message:", error, message);
+-      
+-      // Show error to user if we have a message container
+-      if (this.messagesContainer) {
+-        this.addMessage('system', `Error: ${error.message || 'An unknown error occurred'}`);
+-      }
+-      
+-      // If we have a sendResponse function, send the error
+-      if (typeof sendResponse === 'function') {
+-        sendResponse({ success: false, error: error.message || 'Unknown error' });
+-      }
+-    }
+-  }
+-  
+-  /**
+-   * Handles status update messages
+-   * @param {Object} message - The status update message
+-   * @private
+-   */
+-  _handleStatusUpdate(message) {
+-    if (!message.data) return;
+-    
+-    console.log('📊 [SIDE-PANEL] [sidepanel.js] Processing status update:', JSON.stringify(message.data));
+-    
+-    switch (message.data.type) {
+-      case 'USER_QUERY':
+-        // Only add user messages that come from other sources (like omnibox)
+-        if (message.data.source && message.data.source !== 'sidepanel') {
+-          this.addMessage("user", message.data.message);
+-        }
+-        break;
+-        
+-      case 'PROCESSING':
+-        this.addMessage("system", `🔄 ${message.data.message || 'Processing...'}`);
+-        this.setProcessing(true);
+-        break;
+-        
+-      case 'COMPLETED':
+-        if (message.data.result) {
+-          // Display individual tool results, especially reasoning/thinking
+-          if (message.data.result.toolResults && Array.isArray(message.data.result.toolResults)) {
+-            this._processToolResults(message.data.result.toolResults);
+-          }
+-          
+-          // Display final response if available
+-          if (message.data.result.response) {
+-            this.addMessage("agent", message.data.result.response);
+-          } else if (!message.data.result.success) {
+-            this.addMessage("agent", `❌ ${message.data.result.error || 'Operation failed'}`);
+-          }
+-        }
+-        this.setProcessing(false);
+-        break;
+-        
+-      case 'ERROR':
+-        this.addMessage("system", `❌ ${message.data.error || 'An error occurred'}`);
+-        this.setProcessing(false);
+-        break;
+-        
+-      default:
+-        console.warn('⚠️ [SIDE-PANEL] [sidepanel.js] Unknown status type:', message.data.type);
+-    }
+-  }
+-  
+-  /**
+-   * Processes tool results and adds appropriate messages
+-   * @param {Array} toolResults - Array of tool result objects
+-   * @private
+-   */
+-  _processToolResults(toolResults) {
+-    try {
+-      toolResults.forEach(toolResult => {
+-        // Update tool indicator to show current tool
+-        if (toolResult.tool && this.isProcessing) {
+-          this.updateToolIndicator(`Using ${this._getToolDisplayName(toolResult.tool)}...`);
+-        }
+-        
+-        if (toolResult.tool === 'reasoning' && toolResult.args) {
+-          // Display thinking process
+-          if (toolResult.args.thinking) {
+-            this.addMessage("agent", `💭 **Thinking**: ${toolResult.args.thinking}`);
+-          }
+-          if (toolResult.args.evaluation) {
+-            this.addMessage("agent", `📊 **Evaluation**: ${toolResult.args.evaluation}`);
+-          }
+-          if (toolResult.args.next_goal) {
+-            this.addMessage("agent", `🎯 **Next Goal**: ${toolResult.args.next_goal}`);
+-          }
+-        } else if (toolResult.tool !== 'reasoning') {
+-          // Display other tool results briefly
+-          const result = toolResult.result;
+-          if (result && !result.error) {
+-            this.addMessage("system", `🔧 ${this._getToolDisplayName(toolResult.tool)}: ${typeof result === 'string' ? result : 'Success'}`);
+-          } else if (result && result.error) {
+-            this.addMessage("system", `❌ ${this._getToolDisplayName(toolResult.tool)}: ${result.error}`);
+-          }
+-        }
+-      });
+-    } catch (error) {
+-      console.error("❌ [SIDE-PANEL] [sidepanel.js] Error in _processToolResults:", error);
+-      this.addMessage("system", `❌ Error processing tool results: ${error.message || 'Unknown error'}`);
+-    }
+-  }
+-
+-  /**
+-   * Handles user questions from the LLM
+-   * @param {Object} message - The message object
+-   * @param {Function} sendResponse - Function to send a response
+-   * @private
+-   */
+-  _handleUserQuestion(message, sendResponse) {
+-    console.log('❓ [SIDE-PANEL] Handling user question:', message.question);
+-
+-    // Add the question as an agent message
+-    this.addMessage("agent", `❓ ${message.question}`);
+-
+-    // Store the request info for when user responds
+-    this.pendingQuestionRequest = {
+-      requestId: message.requestId,
+-      sendResponse: sendResponse
+-    };
+-
+-    // Update status to show we're waiting for user input
+-    this.updateStatus("waiting", "Waiting for your response...");
+-
+-    // Acknowledge receipt
+-    sendResponse({ success: true });
+-
+-    return true;
+-  }
+-
+-
+-  /**
+-   * Remove emojis from text content
+-   */
+-  /**
+-   * Handle tool update messages
+-   * @param {Object} message - The tool update message
+-   * @private
+-   */
+-  _handleToolUpdate(message) {
+-    console.log('🔧 [SIDE-PANEL] Tool update received:', message);
+-    
+-    if (message.tool && this.isProcessing) {
+-      // Update the tool indicator in the thinking display
+-      this.updateToolIndicator(message.message || `Using ${this._getToolDisplayName(message.tool)}...`);
+-      
+-      // Show tool details if available
+-      if (message.details && (message.details.error || message.details.success)) {
+-        const statusIcon = message.details.error ? '❌' : message.details.success ? '✅' : '🔧';
+-        const toolMessage = message.details.error 
+-          ? `${statusIcon} ${this._getToolDisplayName(message.tool)}: ${message.details.error}`
+-          : `${statusIcon} ${this._getToolDisplayName(message.tool)}: Success`;
+-        
+-        // Only show significant tool results (errors or important completions)
+-        if (message.details.error || message.tool === 'reasoning') {
+-          this.addMessage("system", toolMessage);
+-        }
+-      }
+-    }
+-  }
+-
+-  /**
+-   * Handle reasoning update messages
+-   * @param {Object} message - The reasoning update message
+-   * @private
+-   */
+-  _handleReasoningUpdate(message) {
+-    console.log('🧠 [SIDE-PANEL] Reasoning update received:', message);
+-    
+-    if (message.reasoning && message.reasoning.trim()) {
+-      // Show AI reasoning as agent message
+-      const reasoningText = `💭 **Iteration ${message.iteration}**: ${message.reasoning}`;
+-      this.addMessage("agent", reasoningText);
+-    }
+-  }
+-
+-  /**
+-   * Get display name for tools
+-   * @param {string} toolName - Internal tool name
+-   * @returns {string} Display name
+-   * @private
+-   */
+-  _getToolDisplayName(toolName) {
+-    const toolNames = {
+-      'clickElement': 'Click Element',
+-      'fillInput': 'Fill Input',
+-      'getPageContent': 'Get Page Content',
+-      'scrollPage': 'Scroll Page',
+-      'navigateToUrl': 'Navigate to URL',
+-      'takeScreenshot': 'Take Screenshot',
+-      'reasoning': 'Reasoning',
+-      'webSearch': 'Web Search',
+-      'readFile': 'Read File',
+-      'writeFile': 'Write File'
+-    };
+-    return toolNames[toolName] || toolName;
+-  }
+-
+-  removeEmojis(text) {
+-    // Remove common emojis used in the system
+-    return text.replace(/[🚀🔧📊❌✅⏳💭🎯🔍⚠️📸📝🌐✨📋❓]/g, '')
+-               .replace(/\s+/g, ' ')
+-               .trim();
+-  }
+-
+-  /**
+-   * Show thinking indicator
+-   * @param {string} toolName - Name of the current tool being used
+-   */
+-  showThinking(toolName = 'Thinking...') {
+-    this.thinkingStartTime = Date.now();
+-    this.currentTool = toolName;
+-    
+-    const thinkingEl = document.importNode(this.thinkingTemplate, true).firstElementChild;
+-    const durationSpan = thinkingEl.querySelector('.thinking-duration');
+-    const toolNameSpan = thinkingEl.querySelector('.tool-name');
+-    
+-    // Set initial tool name
+-    if (toolNameSpan) {
+-      toolNameSpan.textContent = toolName;
+-    }
+-    
+-    // Update duration every second
+-    const updateDuration = () => {
+-      if (this.thinkingStartTime) {
+-        const seconds = Math.floor((Date.now() - this.thinkingStartTime) / 1000);
+-        if (durationSpan) {
+-          durationSpan.textContent = seconds;
+-        }
+-      }
+-    };
+-    
+-    this.thinkingInterval = setInterval(updateDuration, 1000);
+-    
+-    this.messagesContainer.appendChild(thinkingEl);
+-    this.currentThinkingElement = thinkingEl;
+-    this.scrollToBottom();
+-  }
+-
+-  /**
+-   * Update the current tool being used
+-   * @param {string} toolName - Name of the tool
+-   */
+-  updateToolIndicator(toolName) {
+-    this.currentTool = toolName;
+-    if (this.currentThinkingElement) {
+-      const toolNameSpan = this.currentThinkingElement.querySelector('.tool-name');
+-      if (toolNameSpan) {
+-        toolNameSpan.textContent = toolName;
+-      }
+-    }
+-  }
+-
+-  /**
+-   * Hide thinking indicator
+-   */
+-  hideThinking() {
+-    if (this.thinkingInterval) {
+-      clearInterval(this.thinkingInterval);
+-      this.thinkingInterval = null;
+-    }
+-    
+-    if (this.currentThinkingElement) {
+-      this.currentThinkingElement.remove();
+-      this.currentThinkingElement = null;
+-    }
+-    
+-    this.thinkingStartTime = null;
+-    this.currentTool = null;
+-  }
+-
+-}
+-
+-// Initialize the side panel when the DOM is fully loaded
+-document.addEventListener('DOMContentLoaded', () => {
+-  window.vibeSidePanel = new VibeAISidePanel();
+-});
+-
+-// Make available globally for debugging
+-window.VibeAISidePanel = VibeAISidePanel;
+\ No newline at end of file
+-- 
+2.50.0
+

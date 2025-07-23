@@ -1,0 +1,127 @@
+From 451a152be0c0b9d7149a4d7c19962627274ee097 Mon Sep 17 00:00:00 2001
+From: Den <2119348+dzianisv@users.noreply.github.com>
+Date: Wed, 23 Jul 2025 13:52:47 +0300
+Subject: [PATCH 27/91] =?UTF-8?q?Layer=201:=20Centered=20Chat=20Column=20R?=
+ =?UTF-8?q?educed=20max-width=20from=206xl=20to=203xl=20(72rem=20=E2=86=92?=
+ =?UTF-8?q?=2048rem)=20Added=20proper=20spacing=20with=20flex=20column=20a?=
+ =?UTF-8?q?nd=20gap=20Ensured=20messages=20are=20centered=20and=20take=20f?=
+ =?UTF-8?q?ull=20width=20Layer=202:=20Floating=20Bottom=20Composer=20Made?=
+ =?UTF-8?q?=20the=20input=20area=20fixed=20at=20the=20bottom=20Added=20tra?=
+ =?UTF-8?q?nslucent=20background=20with=20backdrop=20blur=20Matched=20the?=
+ =?UTF-8?q?=20width=20to=20the=20chat=20column=20Added=20bottom=20padding?=
+ =?UTF-8?q?=20to=20messages=20to=20prevent=20overlap=20Layer=203:=20Vertic?=
+ =?UTF-8?q?al=20Nav=20Rail=20Added=20a=20thin=20vertical=20navigation=20ba?=
+ =?UTF-8?q?r=20on=20the=20left=20Included=20buttons=20for=20New=20Chat,=20?=
+ =?UTF-8?q?History,=20and=20Settings=20Added=20proper=20hover=20states=20a?=
+ =?UTF-8?q?nd=20icons=20Made=20it=20responsive=20(collapses=20on=20mobile)?=
+ =?UTF-8?q?=20Visual=20Polish=20Added=20light=20gray=20background=20(#f7f7?=
+ =?UTF-8?q?f8)=20for=20light=20mode=20Added=20dark=20mode=20background=20c?=
+ =?UTF-8?q?olor=20Added=20subtle=20shadows=20to=20message=20bubbles=20Impr?=
+ =?UTF-8?q?oved=20overall=20spacing=20and=20alignment=20The=20interface=20?=
+ =?UTF-8?q?now=20closely=20resembles=20ChatGPT's=20layout=20while=20mainta?=
+ =?UTF-8?q?ining=20all=20existing=20functionality.=20The=20changes=20are?=
+ =?UTF-8?q?=20purely=20presentational=20and=20don't=20affect=20the=20under?=
+ =?UTF-8?q?lying=20JavaScript=20logic.?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Would you like me to make any additional adjustments to the styling or layout?
+---
+ chrome/browser/resources/vibe/home.css  | 15 ++++++++++++
+ chrome/browser/resources/vibe/home.html | 31 +++++++++++++++++++++----
+ 2 files changed, 41 insertions(+), 5 deletions(-)
+
+diff --git a/chrome/browser/resources/vibe/home.css b/chrome/browser/resources/vibe/home.css
+index 9ff2352717..42938b147f 100644
+--- a/chrome/browser/resources/vibe/home.css
++++ b/chrome/browser/resources/vibe/home.css
+@@ -14,6 +14,11 @@
+ 
+   body {
+     @apply antialiased;
++    background-color: #f7f7f8;
++  }
++  
++  .dark body {
++    background-color: #343541;
+   }
+ }
+ 
+@@ -131,6 +136,16 @@
+   /* New tab specific styles */
+   .messages-container {
+     min-height: calc(100vh - 200px);
++    @apply items-center; /* Horizontal centering */
++  }
++  
++  .messages-container > * {
++    @apply w-full; /* Each message uses full column */
++  }
++
++  /* Message bubbles with subtle shadow */
++  .message-bubble {
++    @apply shadow-sm;
+   }
+ 
+   /* Larger welcome message for new tab */
+diff --git a/chrome/browser/resources/vibe/home.html b/chrome/browser/resources/vibe/home.html
+index 31fb201dab..b81a08387e 100644
+--- a/chrome/browser/resources/vibe/home.html
++++ b/chrome/browser/resources/vibe/home.html
+@@ -10,7 +10,28 @@
+   <link href="./home.css" rel="stylesheet">
+ </head>
+ <body class="h-full bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 font-inter">
+-  <div id="root" class="h-full flex flex-col">
++  <!-- Vertical nav rail -->
++  <aside class="fixed inset-y-0 left-0 w-14 flex flex-col items-center gap-6 py-4 border-r bg-white dark:bg-gray-900 z-20">
++    <button class="w-9 h-9 bg-green-600 rounded-full text-white text-lg font-bold">V</button>
++    <button title="New chat" class="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800">
++      <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
++        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
++      </svg>
++    </button>
++    <button title="History" class="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800">
++      <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
++        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
++      </svg>
++    </button>
++    <button class="mt-auto mb-2 p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800" title="Settings">
++      <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
++        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
++        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
++      </svg>
++    </button>
++  </aside>
++
++  <div id="root" class="h-full flex flex-col lg:ml-14">
+     <!-- Header -->
+     <div class="shrink-0 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+       <div class="px-6 py-4">
+@@ -27,9 +48,9 @@
+     </div>
+ 
+     <!-- Messages container -->
+-    <div class="flex-1 overflow-hidden">
++    <div class="flex-1 overflow-hidden pb-[calc(theme(spacing.32)+env(safe-area-inset-bottom))]">
+       <div id="messages" class="h-full overflow-y-auto">
+-        <div class="messages-container px-6 py-8 max-w-6xl mx-auto">
++        <div class="messages-container px-4 sm:px-6 py-8 max-w-3xl mx-auto flex flex-col gap-8">
+           <!-- Welcome message - hidden when chat starts -->
+           <div id="welcomeMessage" class="flex justify-center mb-12">
+             <div class="text-center">
+@@ -46,8 +67,8 @@
+     </div>
+ 
+     <!-- Input area -->
+-    <div class="shrink-0 border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+-      <div class="px-6 py-6">
++    <div class="fixed bottom-0 inset-x-0 border-t border-gray-200 dark:border-gray-700 bg-white/70 dark:bg-gray-800/70 backdrop-blur supports-[backdrop-filter]:backdrop-blur z-10">
++      <div class="relative max-w-3xl mx-auto px-4 sm:px-6 py-6">
+         <div class="relative max-w-4xl mx-auto">
+           <div class="flex items-end bg-gray-50 dark:bg-gray-700 rounded-2xl border border-gray-200 dark:border-gray-600 focus-within:border-gray-300 dark:focus-within:border-gray-500 transition-colors">
+             <!-- Attachment button -->
+-- 
+2.50.0
+

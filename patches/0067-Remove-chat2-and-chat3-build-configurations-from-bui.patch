@@ -1,0 +1,117 @@
+From 490489779f46e00173f561348c5f99ae9a0eba31 Mon Sep 17 00:00:00 2001
+From: Den <2119348+dzianisv@users.noreply.github.com>
+Date: Mon, 28 Jul 2025 16:40:28 +0300
+Subject: [PATCH 67/91] Remove chat2 and chat3 build configurations from
+ build.js
+
+Simplify build script to only support Chat4:
+- Remove environment variable checks for VIBE_BUILD_CHAT3/CHAT2
+- Remove buildChat2App() and buildChat3App() functions
+- Remove chat2AppDir and chat3AppDir path definitions
+- Streamline main build function to directly call buildChat4App()
+- Clean up conditional logic and unused code
+
+The build process now focuses solely on Chat4, making the codebase
+easier to maintain and understand.
+---
+ chrome/browser/resources/vibe/build.js | 63 ++------------------------
+ 1 file changed, 3 insertions(+), 60 deletions(-)
+
+diff --git a/chrome/browser/resources/vibe/build.js b/chrome/browser/resources/vibe/build.js
+index 818da59908..fcf49dd7d6 100755
+--- a/chrome/browser/resources/vibe/build.js
++++ b/chrome/browser/resources/vibe/build.js
+@@ -12,12 +12,6 @@ const __dirname = path.dirname(__filename);
+ const isProd = process.env.NODE_ENV === 'production';
+ const outDir = process.argv[2] || "dist";
+ 
+-// Check which chat app to build
+-const shouldBuildChat3 = ['true', '1', 'yes'].includes(process.env.VIBE_BUILD_CHAT3?.toLowerCase());
+-const shouldBuildChat4 = ['true', '1', 'yes'].includes(process.env.VIBE_BUILD_CHAT4?.toLowerCase());
+-
+-const chat2AppDir = path.resolve(__dirname, 'apps/chat2');
+-const chat3AppDir = path.resolve(__dirname, 'apps/chat3');
+ const chat4AppDir = path.resolve(__dirname, 'apps/chat4');
+ 
+ // Ensure output directory exists
+@@ -30,23 +24,6 @@ function ensureDirectoryExists(filePath) {
+   fs.mkdirSync(dirname);
+ }
+ 
+-
+-// Build chat2 app if it exists
+-function buildChat2App() {
+-  const outputDirAbsolute = path.resolve(__dirname, outDir);
+-  // Run the chat2 build script
+-  console.log('Building chat2 app...');
+-  execSync('npm run build', { 
+-    cwd: chat2AppDir, 
+-    stdio: 'inherit',
+-    env: { 
+-      ...process.env, 
+-      NODE_ENV: 'production',
+-      OUTPUT_DIRECTORY: outputDirAbsolute
+-    }
+-  });
+-}
+-
+ // Copy static files
+ function copyStaticFiles() {
+   const filesToCopy = [
+@@ -71,33 +48,7 @@ function copyStaticFiles() {
+   });
+ }
+ 
+-// Build chat3 app if it exists
+-function buildChat3App() {
+-  const outputDirAbsolute = path.resolve(__dirname, outDir);
+-  
+-  // First run npm install if needed
+-  if (!fs.existsSync(path.join(chat3AppDir, 'node_modules'))) {
+-    console.log('Installing chat3 dependencies...');
+-    execSync('npm install', { 
+-      cwd: chat3AppDir, 
+-      stdio: 'inherit'
+-    });
+-  }
+-  
+-  // Run consolidated build script
+-  console.log('Building chat3 app...');
+-  execSync('npm run build', { 
+-    cwd: chat3AppDir, 
+-    stdio: 'inherit',
+-    env: { 
+-      ...process.env, 
+-      NODE_ENV: 'production',
+-      OUTPUT_DIRECTORY: outputDirAbsolute
+-    }
+-  });
+-}
+-
+-// Build chat4 app if it exists
++// Build chat4 app
+ function buildChat4App() {
+   const outputDirAbsolute = path.resolve(__dirname, outDir);
+   
+@@ -173,16 +124,8 @@ async function build() {
+     fs.mkdirSync(outDir, { recursive: true });
+   }
+   
+-  // Build chat apps based on environment variables
+-  // Default to Chat4 unless explicitly overridden
+-  if (shouldBuildChat3) {
+-    buildChat3App();
+-  } else if (process.env.VIBE_BUILD_CHAT2 === 'true') {
+-    buildChat2App();
+-  } else {
+-    // Default to Chat4
+-    buildChat4App();
+-  }
++  // Build chat4 app
++  buildChat4App();
+   
+   // Build JS
+   await buildJS();
+-- 
+2.50.0
+

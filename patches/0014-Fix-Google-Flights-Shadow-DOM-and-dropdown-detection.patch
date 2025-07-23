@@ -1,0 +1,150 @@
+From 3190793c560ba4284948c4d923d820f1519b35f0 Mon Sep 17 00:00:00 2001
+From: Den <2119348+dzianisv@users.noreply.github.com>
+Date: Tue, 22 Jul 2025 18:49:44 +0300
+Subject: [PATCH 14/91] Fix Google Flights Shadow DOM and dropdown detection
+ issues
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- Add querySelectorDeep() function to pierce Shadow DOM boundaries
+- Update selectors to use aria-label instead of placeholder attributes
+- Fix form filling with comprehensive event dispatching (focus/keydown/input/keyup/change)
+- Improve element clicking with scroll-into-view and shadow-aware selection
+- Update wait_for_element to check visibility (offsetParent \!== null)
+- Update AI agent workflow to use correct Google Flights selectors:
+  * input[aria-label="Where from?"] instead of placeholder-based selectors
+  * Proper wait_for_element → click_element pattern for dropdown suggestions
+  * li[role="option"] for suggestion selection
+
+Resolves issues where agent couldn't find Google Flights form elements due to
+Shadow DOM encapsulation and dynamic placeholder changes after focus.
+---
+ chrome/browser/resources/vibe/ai_agent.js | 22 ++++++----
+ chrome/browser/resources/vibe/content.js  | 52 +++++++++++++++++------
+ 2 files changed, 52 insertions(+), 22 deletions(-)
+
+diff --git a/chrome/browser/resources/vibe/ai_agent.js b/chrome/browser/resources/vibe/ai_agent.js
+index de834af187..1cd0e8d18e 100644
+--- a/chrome/browser/resources/vibe/ai_agent.js
++++ b/chrome/browser/resources/vibe/ai_agent.js
+@@ -314,15 +314,19 @@ export class VibeLangchainAgent {
+ **CRITICAL WORKFLOW FOR FLIGHTS:**
+ 1. User requests flight booking → IMMEDIATELY navigate to ${FLIGHT_SITES}  
+ 2. After navigation → get_page_content to see the page
+-3. Fill departure airport → get_page_content to see dropdown suggestions
+-4. Click dropdown suggestion → get_page_content to confirm
+-5. Fill destination airport → get_page_content to see dropdown suggestions  
+-6. Click dropdown suggestion → continue with dates
+-7. ALWAYS call get_page_content AFTER each form interaction to see dynamic changes
+-
+-**DYNAMIC CONTENT RULE**: Airport inputs show dropdown suggestions when typing. You MUST:
+-- Type "SFO" → get_page_content → click suggestion from dropdown
+-- Type "JFK" → get_page_content → click suggestion from dropdown
++3. Fill departure airport using aria-label selector: input[aria-label="Where from?"]
++4. Wait for dropdown to appear: wait_for_element li[role="option"]
++5. Click first suggestion: click_element li[role="option"]:first-child
++6. Fill destination airport: input[aria-label="Where to?"]  
++7. Wait for dropdown: wait_for_element li[role="option"]
++8. Click first suggestion: click_element li[role="option"]:first-child
++9. Continue with date selection
++
++**SELECTOR RULES**: Google Flights uses Shadow DOM and ARIA labels:
++- Departure: input[aria-label="Where from?"] (NOT placeholder="Where from?")
++- Destination: input[aria-label="Where to?"] (NOT placeholder="Where to?")
++- Suggestions: li[role="option"] inside ul[role="listbox"]
++- ALWAYS use wait_for_element before clicking dropdown suggestions
+ 
+ **Tools:** ${langchainTools.map(t => t.name).join(', ')}
+ 
+diff --git a/chrome/browser/resources/vibe/content.js b/chrome/browser/resources/vibe/content.js
+index ba99a9b546..1054ed457c 100644
+--- a/chrome/browser/resources/vibe/content.js
++++ b/chrome/browser/resources/vibe/content.js
+@@ -270,12 +270,27 @@ function fillFlightForm(data) {
+  * Fill input field
+  */
+ function fillInput(selector, value) {
+-  const element = document.querySelector(selector);
++  // Use deep selector to pierce Shadow DOM
++  const element = querySelectorDeep(document, selector);
+   if (element) {
++    // Focus the element first to trigger any dynamic changes
++    element.focus();
++    
++    // Set the value
+     element.value = value;
+-    element.dispatchEvent(new Event("input", { bubbles: true }));
+-    element.dispatchEvent(new Event("change", { bubbles: true }));
+-    console.log(`✅ Filled ${selector} with "${value}"`);
++    
++    // Dispatch comprehensive events to trigger Google's JS
++    const events = [
++      new Event("focus", { bubbles: true }),
++      new KeyboardEvent("keydown", { bubbles: true, key: value }),
++      new Event("input", { bubbles: true }),
++      new KeyboardEvent("keyup", { bubbles: true, key: value }),
++      new Event("change", { bubbles: true })
++    ];
++    
++    events.forEach(event => element.dispatchEvent(event));
++    
++    console.log(`✅ Filled ${selector} with "${value}" (shadow-aware)`);
+     return { success: true, message: `Filled ${selector} with "${value}"` };
+   } else {
+     const errorMessage = `Could not find element: ${selector}`;
+@@ -431,12 +446,23 @@ function isElementVisible(element) {
+ function handleElementClick(data) {
+   console.log("👆 Clicking element:", JSON.stringify(data));
+ 
+-  const element = document.querySelector(data.selector);
++  // Use deep selector to pierce Shadow DOM
++  const element = querySelectorDeep(document, data.selector);
+   if (element) {
+-    element.click();
+-    console.log(`✅ Clicked element: ${data.selector}`);
++    // Scroll element into view to avoid overlay issues
++    element.scrollIntoView({ block: 'center', behavior: 'smooth' });
++    
++    // Wait a bit for scroll to complete then click
++    setTimeout(() => {
++      element.click();
++      console.log(`✅ Clicked element: ${data.selector} (shadow-aware)`);
++    }, 100);
++    
++    return { success: true, message: `Clicked ${data.selector}` };
+   } else {
+-    console.log(`❌ Could not find element to click: ${data.selector}`);
++    const errorMessage = `Could not find element to click: ${data.selector}`;
++    console.log(`❌ ${errorMessage}`);
++    throw new Error(errorMessage);
+   }
+ }
+ 
+@@ -1077,9 +1103,9 @@ function handleWaitForElement(data) {
+       const startTime = Date.now();
+       let timeoutId;
+       
+-      // Check if element already exists
+-      const existingElement = document.querySelector(selector);
+-      if (existingElement) {
++      // Check if element already exists and is visible (using deep selector)
++      const existingElement = querySelectorDeep(document, selector);
++      if (existingElement && existingElement.offsetParent !== null) {
+         console.log(`✅ Element ${selector} already exists on page`);
+         resolve({
+           success: true,
+@@ -1092,8 +1118,8 @@ function handleWaitForElement(data) {
+       
+       // Set up MutationObserver to watch for element appearance
+       const observer = new MutationObserver((mutations) => {
+-        const element = document.querySelector(selector);
+-        if (element) {
++        const element = querySelectorDeep(document, selector);
++        if (element && element.offsetParent !== null) {
+           const waitTime = Date.now() - startTime;
+           console.log(`✅ Element ${selector} appeared after ${waitTime}ms`);
+           
+-- 
+2.50.0
+

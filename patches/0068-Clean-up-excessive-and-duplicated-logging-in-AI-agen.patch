@@ -1,0 +1,77 @@
+From c128d3a5240f7225320da84091132f843e95a790 Mon Sep 17 00:00:00 2001
+From: Den <2119348+dzianisv@users.noreply.github.com>
+Date: Mon, 28 Jul 2025 18:34:31 +0300
+Subject: [PATCH 68/91] Clean up excessive and duplicated logging in AI agent
+
+- Remove verbose multi-line JSON logging, use JSON.stringify() instead
+- Simplify callback handlers and execution flow logging
+- Remove redundant comments and detailed step logging
+- Keep essential information while eliminating log noise
+- Maintain agent functionality with cleaner debug output
+---
+ chrome/browser/resources/vibe/ai_agent.js | 22 +++++-----------------
+ 1 file changed, 5 insertions(+), 17 deletions(-)
+
+diff --git a/chrome/browser/resources/vibe/ai_agent.js b/chrome/browser/resources/vibe/ai_agent.js
+index cdc89f666a..6dfb5262ea 100644
+--- a/chrome/browser/resources/vibe/ai_agent.js
++++ b/chrome/browser/resources/vibe/ai_agent.js
+@@ -373,7 +373,6 @@ export class VibeLangchainAgent {
+       // Send initial thinking update
+       this.#sendToolUpdate(tabId, 'thinking', 'Starting AI agent...');
+ 
+-      // Create a custom callback to capture reasoning
+       let iterationCount = 0;
+       const callbacks = [{
+         handleLLMStart: async (llm, prompts) => {
+@@ -381,42 +380,31 @@ export class VibeLangchainAgent {
+           this.#sendToolUpdate(tabId, 'thinking', `Processing (iteration ${iterationCount})...`);
+         },
+         handleLLMEnd: async (output) => {
+-          // Check if we should stop
+           if (this.#shouldStopOperation()) {
+             throw new Error('Operation stopped by user');
+           }
+           
+-          // Send reasoning update if available
+-          if (output.generations && output.generations[0] && output.generations[0][0]) {
++          if (output.generations?.[0]?.[0]) {
+             const content = output.generations[0][0].text;
+-            if (content && content.trim()) {
++            if (content?.trim()) {
+               this.#sendReasoningUpdate(tabId, content, iterationCount);
+             }
+           }
+         }
+       }];
+ 
+-      // Execute the task with callbacks
+       let result;
+       try {
+-        console.log(`🚀 [AI_AGENT] Invoking AgentExecutor with input: "${user_request}"`);
++        console.log(`🚀 [AI_AGENT] Executing: "${user_request}"`);
+         result = await executor.invoke({
+           input: user_request
+         }, { callbacks });
+-        console.log(`✅ [AI_AGENT] AgentExecutor invoke completed successfully`);
++        console.log(`✅ [AI_AGENT] Completed with ${result.intermediateSteps?.length || 0} steps`);
+       } catch (invokeError) {
+-        console.error(`❌ [AI_AGENT] AgentExecutor invoke failed:`, invokeError);
++        console.error(`❌ [AI_AGENT] Execution failed:`, invokeError.message);
+         throw invokeError;
+       }
+ 
+-      console.log(`🎉 [AI_AGENT] AgentExecutor completed:`, JSON.stringify({
+-        hasOutput: !!result.output,
+-        hasInput: !!result.input,
+-        steps: result.intermediateSteps?.length || 0,
+-        resultKeys: Object.keys(result),
+-        resultType: typeof result
+-      }, null, 2));
+-
+       // Note: Memory temporarily disabled while debugging AgentExecutor output issue
+       // TODO: Re-enable memory after fixing the multi-key output problem
+ 
+-- 
+2.50.0
+

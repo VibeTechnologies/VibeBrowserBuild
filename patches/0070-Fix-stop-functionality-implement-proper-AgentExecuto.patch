@@ -1,0 +1,107 @@
+From 8ee68a9a0551b47aa190a7fdec48ef94ada1b0cd Mon Sep 17 00:00:00 2001
+From: Den <2119348+dzianisv@users.noreply.github.com>
+Date: Mon, 28 Jul 2025 21:16:46 +0300
+Subject: [PATCH 70/91] Fix stop functionality - implement proper AgentExecutor
+ cancellation
+
+Issue: Stop button didn't interrupt AI agent, AgentExecutor.invoke() continued running
+despite shouldStop flag being set to true.
+
+Solution:
+1. Add AbortController to ai_agent.js for proper cancellation support
+2. Race AgentExecutor.invoke() against abort signal using Promise.race()
+3. Call abortController.abort() in stopOperation() to immediately cancel execution
+4. Add proper cleanup in finally block to reset operation state
+
+Result: Stop button now immediately cancels the AgentExecutor operation and returns
+"Task stopped by user" response instead of continuing to completion.
+
+Technical details:
+- AbortController created at start of processUserRequest()
+- Promise.race([executorPromise, abortPromise]) enables immediate cancellation
+- Stop signal propagated through AbortController.signal.addEventListener('abort')
+- Clean operation state reset in finally block prevents lingering state
+---
+ chrome/browser/resources/vibe/ai_agent.js | 29 ++++++++++++++++++++++-
+ 1 file changed, 28 insertions(+), 1 deletion(-)
+
+diff --git a/chrome/browser/resources/vibe/ai_agent.js b/chrome/browser/resources/vibe/ai_agent.js
+index 6dfb5262ea..b965960f73 100644
+--- a/chrome/browser/resources/vibe/ai_agent.js
++++ b/chrome/browser/resources/vibe/ai_agent.js
+@@ -39,6 +39,7 @@ export class VibeLangchainAgent {
+     // Stop control for current operations
+     this.currentOperationId = null;
+     this.shouldStop = false;
++    this.abortController = null;
+   }
+ 
+ 
+@@ -93,6 +94,13 @@ export class VibeLangchainAgent {
+     // If operation ID matches current operation or no ID provided, stop current operation
+     if (!operationId || operationId === this.currentOperationId) {
+       this.shouldStop = true;
++      
++      // Abort the current operation if AbortController exists
++      if (this.abortController) {
++        this.abortController.abort();
++        console.log(`🛑 [AI_AGENT] AbortController.abort() called for operation ${this.currentOperationId}`);
++      }
++      
+       console.log(`🛑 [AI_AGENT] Current operation ${this.currentOperationId} marked for stopping`);
+       return true;
+     }
+@@ -265,6 +273,7 @@ export class VibeLangchainAgent {
+     // Initialize operation tracking
+     this.currentOperationId = operationId || Math.random().toString(36).substring(2);
+     this.shouldStop = false;
++    this.abortController = new AbortController();
+     
+     console.log(`🚀 [AI_AGENT] Starting operation ${this.currentOperationId}: "${user_request}"`);
+   
+@@ -396,9 +405,20 @@ export class VibeLangchainAgent {
+       let result;
+       try {
+         console.log(`🚀 [AI_AGENT] Executing: "${user_request}"`);
+-        result = await executor.invoke({
++        
++        // Create a promise that rejects when aborted
++        const abortPromise = new Promise((_, reject) => {
++          this.abortController.signal.addEventListener('abort', () => {
++            reject(new Error('Operation stopped by user'));
++          });
++        });
++        
++        // Race between the executor and the abort signal
++        const executorPromise = executor.invoke({
+           input: user_request
+         }, { callbacks });
++        
++        result = await Promise.race([executorPromise, abortPromise]);
+         console.log(`✅ [AI_AGENT] Completed with ${result.intermediateSteps?.length || 0} steps`);
+       } catch (invokeError) {
+         console.error(`❌ [AI_AGENT] Execution failed:`, invokeError.message);
+@@ -423,6 +443,7 @@ export class VibeLangchainAgent {
+       
+       // Check if error was due to user stopping operation
+       if (error.message === 'Operation stopped by user') {
++        console.log(`🛑 [AI_AGENT] Operation ${this.currentOperationId} stopped by user`);
+         return {
+           output: "Task stopped by user",
+           reasoning: "Operation was stopped by user",
+@@ -439,6 +460,12 @@ export class VibeLangchainAgent {
+       // For now, throw the error instead of falling back
+       // The user requested to remove the manual loop fallback
+       throw error;
++    } finally {
++      // Clean up abort controller and operation tracking
++      this.abortController = null;
++      this.currentOperationId = null;
++      this.shouldStop = false;
++      console.log(`🧹 [AI_AGENT] Operation cleanup completed`);
+     }
+   }
+ 
+-- 
+2.50.0
+

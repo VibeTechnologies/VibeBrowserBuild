@@ -1,0 +1,346 @@
+From 1e7bca9edb298a6a3f21bf8df5ab6feba5361f31 Mon Sep 17 00:00:00 2001
+From: Den <2119348+dzianisv@users.noreply.github.com>
+Date: Wed, 30 Jul 2025 01:09:18 +0300
+Subject: [PATCH 78/91] Fix AI agent tool messaging errors - add FILL and TYPE
+ handlers
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- Implement comprehensive custom selector parsing system in content.js
+- Add parseCustomSelector() to handle AI-generated selector syntax:
+  * role:textbox[name=Origin] → [role="textbox"][name="Origin"]
+  * button:Search → XPath for text-based button selection
+  * text:content → XPath for text content matching
+  * placeholder:text → [placeholder="text"] attribute selector
+- Add XPath support functions: findElementByXPath, fillInputXPath, clickElementXPath
+- Update all handler functions (handleFill, handleClick, handleType, handleFindElement)
+- Fix invalid CSS selector errors preventing AI agent DOM interactions
+- Maintain backward compatibility with existing CSS selectors
+- Add comprehensive error handling and logging
+
+Resolves agent booking completion issues and Chat4 status update problems.
+---
+ chrome/browser/resources/vibe/content.js | 258 ++++++++++++++++++++---
+ 1 file changed, 232 insertions(+), 26 deletions(-)
+
+diff --git a/chrome/browser/resources/vibe/content.js b/chrome/browser/resources/vibe/content.js
+index e2c83bfc34..cf7bd8655b 100644
+--- a/chrome/browser/resources/vibe/content.js
++++ b/chrome/browser/resources/vibe/content.js
+@@ -717,6 +717,162 @@ async function fillFlightForm(data) {
+  * @param {string} originalSelector - The original selector
+  * @returns {Array} Array of flexible selectors to try
+  */
++/**
++ * Find element using XPath expression
++ * @param {string} xpathExpression - The XPath expression
++ * @returns {Element|null} - Found element or null
++ */
++function findElementByXPath(xpathExpression) {
++  const result = document.evaluate(
++    xpathExpression,
++    document,
++    null,
++    XPathResult.FIRST_ORDERED_NODE_TYPE,
++    null
++  );
++  return result.singleNodeValue;
++}
++
++/**
++ * Fill input using XPath selector
++ * @param {string} xpathSelector - XPath expression
++ * @param {string} value - Value to fill
++ * @returns {Promise<string>} - Success message
++ */
++async function fillInputXPath(xpathSelector, value) {
++  console.log(`🔍 fillInputXPath called with XPath: "${xpathSelector}" and value: "${value}"`);
++  
++  const element = findElementByXPath(xpathSelector);
++  if (!element) {
++    throw new Error(`Element not found with XPath: ${xpathSelector}`);
++  }
++  
++  console.log(`✅ Found element with XPath: ${element.tagName}${element.id ? '#' + element.id : ''}`);
++  
++  // Focus and fill the element
++  element.focus();
++  
++  if (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA') {
++    element.value = value;
++    element.dispatchEvent(new Event('input', { bubbles: true }));
++    element.dispatchEvent(new Event('change', { bubbles: true }));
++  } else if (element.contentEditable === 'true') {
++    element.textContent = value;
++    element.dispatchEvent(new Event('input', { bubbles: true }));
++  } else {
++    throw new Error(`Element found with XPath is not an input field: ${element.tagName}`);
++  }
++  
++  return `Filled element (XPath: ${xpathSelector}) with "${value}"`;
++}
++
++/**
++ * Click element using XPath selector
++ * @param {string} xpathSelector - XPath expression
++ * @param {string} button - Mouse button ('left', 'right', 'middle')
++ * @returns {Promise<string>} - Success message
++ */
++async function clickElementXPath(xpathSelector, button = 'left') {
++  console.log(`🔍 clickElementXPath called with XPath: "${xpathSelector}" and button: "${button}"`);
++  
++  const element = findElementByXPath(xpathSelector);
++  if (!element) {
++    throw new Error(`Element not found with XPath: ${xpathSelector}`);
++  }
++  
++  console.log(`✅ Found element with XPath: ${element.tagName}${element.id ? '#' + element.id : ''}`);
++  
++  // Scroll element into view if needed and focus
++  element.scrollIntoView({ behavior: 'smooth', block: 'center' });
++  element.focus();
++  
++  // Create and dispatch click event
++  const clickEvent = new MouseEvent('click', {
++    bubbles: true,
++    cancelable: true,
++    button: button === 'left' ? 0 : button === 'right' ? 2 : 1
++  });
++  
++  element.dispatchEvent(clickEvent);
++  
++  return `Clicked element (XPath: ${xpathSelector}) with ${button} button`;
++}
++
++/**
++ * Parse custom selector syntax like 'role:textbox[name=Origin]' into valid CSS selectors
++ * @param {string} selector - The custom selector string
++ * @returns {string|object} - Valid CSS selector or XPath object
++ */
++function parseCustomSelector(selector) {
++  if (!selector || typeof selector !== 'string') {
++    return selector;
++  }
++
++  // Handle role:elementType[attributes] syntax
++  const roleMatch = selector.match(/^role:(\w+)(\[[^\]]+\])?$/);
++  if (roleMatch) {
++    const elementType = roleMatch[1];
++    const attributes = roleMatch[2] || '';
++    
++    // Convert to valid CSS selector
++    let cssSelector = `[role="${elementType}"]`;
++    
++    // Parse attributes like [name=Origin] and add them
++    if (attributes) {
++      const attrMatches = attributes.match(/\[([^=]+)=([^\]]+)\]/g);
++      if (attrMatches) {
++        for (const attrMatch of attrMatches) {
++          const [, attrName, attrValue] = attrMatch.match(/\[([^=]+)=([^\]]+)\]/);
++          cssSelector += `[${attrName}="${attrValue}"]`;
++        }
++      }
++    }
++    
++    console.log(`🔧 Parsed custom selector "${selector}" → "${cssSelector}"`);
++    return cssSelector;
++  }
++
++  // Handle placeholder:text syntax
++  const placeholderMatch = selector.match(/^placeholder:(.+)$/);
++  if (placeholderMatch) {
++    const placeholderText = placeholderMatch[1];
++    const cssSelector = `[placeholder="${placeholderText}"]`;
++    console.log(`🔧 Parsed custom selector "${selector}" → "${cssSelector}"`);
++    return cssSelector;
++  }
++
++  // Handle button:text syntax (find button by text content)
++  const buttonMatch = selector.match(/^button:(.+)$/);
++  if (buttonMatch) {
++    const buttonText = buttonMatch[1];
++    // Use XPath for text matching since CSS doesn't have contains()
++    const xpathSelector = `//button[contains(text(), '${buttonText}')] | //input[@type='button' and @value='${buttonText}'] | //input[@type='submit' and @value='${buttonText}']`;
++    console.log(`🔧 Parsed custom selector "${selector}" → XPath: "${xpathSelector}"`);
++    return { isXPath: true, selector: xpathSelector };
++  }
++
++  // Handle text:content syntax (find element by text content)
++  const textMatch = selector.match(/^text:(.+)$/);
++  if (textMatch) {
++    const textContent = textMatch[1];
++    // Use XPath for text matching
++    const xpathSelector = `//*[contains(text(), '${textContent}')]`;
++    console.log(`🔧 Parsed custom selector "${selector}" → XPath: "${xpathSelector}"`);
++    return { isXPath: true, selector: xpathSelector };
++  }
++
++  // Handle selector:css syntax (explicit CSS selector)
++  const explicitMatch = selector.match(/^selector:(.+)$/);
++  if (explicitMatch) {
++    const cssSelector = explicitMatch[1];
++    console.log(`🔧 Parsed custom selector "${selector}" → "${cssSelector}"`);
++    return cssSelector;
++  }
++
++  // If no custom syntax found, return as-is
++  return selector;
++}
++
+ function generateFlexibleSelectors(originalSelector) {
+   const selectors = [originalSelector]; // Start with original
+   
+@@ -4353,27 +4509,56 @@ async function handleFindElement(data) {
+     
+     // Try different locator strategies
+     if (typeof locator === 'string') {
+-      // Try as CSS selector first
+-      try {
+-        const foundElements = document.querySelectorAll(locator);
+-        elements = Array.from(foundElements).slice(0, options.maxResults || 10).map((el, index) => ({
+-          index: index,
+-          tagName: el.tagName.toLowerCase(),
+-          textContent: el.textContent?.trim().substring(0, 100) || '',
+-          attributes: Array.from(el.attributes).reduce((acc, attr) => {
+-            acc[attr.name] = attr.value;
+-            return acc;
+-          }, {}),
+-          boundingRect: el.getBoundingClientRect(),
+-          visible: el.offsetParent !== null
+-        }));
+-        count = foundElements.length;
+-      } catch (cssError) {
++      // Parse custom selector syntax first, then try as CSS selector or XPath
++      const parsedLocator = parseCustomSelector(locator);
++      
++      if (typeof parsedLocator === 'object' && parsedLocator.isXPath) {
++        // Use XPath directly
++        try {
++          const xpathResult = document.evaluate(parsedLocator.selector, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
++          count = xpathResult.snapshotLength;
++          
++          for (let i = 0; i < Math.min(count, options.maxResults || 10); i++) {
++            const el = xpathResult.snapshotItem(i);
++            if (el && el.nodeType === Node.ELEMENT_NODE) {
++              elements.push({
++                index: i,
++                tagName: el.tagName.toLowerCase(),
++                textContent: el.textContent?.trim().substring(0, 100) || '',
++                attributes: Array.from(el.attributes).reduce((acc, attr) => {
++                  acc[attr.name] = attr.value;
++                  return acc;
++                }, {}),
++                boundingRect: el.getBoundingClientRect(),
++                visible: el.offsetParent !== null
++              });
++            }
++          }
++        } catch (xpathError) {
++          throw new Error(`XPath locator failed: ${xpathError.message}`);
++        }
++      } else {
++        // Use CSS selector
++        try {
++          const foundElements = document.querySelectorAll(parsedLocator);
++          elements = Array.from(foundElements).slice(0, options.maxResults || 10).map((el, index) => ({
++            index: index,
++            tagName: el.tagName.toLowerCase(),
++            textContent: el.textContent?.trim().substring(0, 100) || '',
++            attributes: Array.from(el.attributes).reduce((acc, attr) => {
++              acc[attr.name] = attr.value;
++              return acc;
++            }, {}),
++            boundingRect: el.getBoundingClientRect(),
++            visible: el.offsetParent !== null
++          }));
++          count = foundElements.length;
++        } catch (cssError) {
+         console.warn('CSS selector failed, trying XPath:', cssError.message);
+         
+         // Try as XPath if CSS selector fails
+         try {
+-          const xpathResult = document.evaluate(locator, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
++          const xpathResult = document.evaluate(parsedLocator, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
+           count = xpathResult.snapshotLength;
+           
+           for (let i = 0; i < Math.min(count, options.maxResults || 10); i++) {
+@@ -4395,6 +4580,7 @@ async function handleFindElement(data) {
+         } catch (xpathError) {
+           throw new Error(`Both CSS selector and XPath failed: ${cssError.message}, ${xpathError.message}`);
+         }
++        }
+       }
+     } else if (locator.css) {
+       // Use CSS selector from object
+@@ -4469,9 +4655,13 @@ async function handleClick(data) {
+       return await handleClickAtCoordinates({ x: target.x, y: target.y, button });
+     }
+     
+-    // If target is a string, treat as CSS selector
++    // If target is a string, parse custom selector syntax and treat as CSS selector or XPath
+     if (typeof target === 'string') {
+-      return await handleElementClick({ selector: target, button });
++      const parsedSelector = parseCustomSelector(target);
++      if (typeof parsedSelector === 'object' && parsedSelector.isXPath) {
++        return await clickElementXPath(parsedSelector.selector, button);
++      }
++      return await handleElementClick({ selector: parsedSelector, button });
+     }
+     
+     throw new Error('Invalid target format. Expected string selector or {x, y} coordinates');
+@@ -4496,9 +4686,13 @@ async function handleFill(data) {
+       throw new Error('Value is required for fill');
+     }
+     
+-    // If target is a string, treat as CSS selector and use fillInput
++    // If target is a string, parse custom selector syntax and use fillInput
+     if (typeof target === 'string') {
+-      return await fillInput(target, value);
++      const parsedSelector = parseCustomSelector(target);
++      if (typeof parsedSelector === 'object' && parsedSelector.isXPath) {
++        return await fillInputXPath(parsedSelector.selector, value);
++      }
++      return await fillInput(parsedSelector, value);
+     }
+     
+     // If target is an object with selector properties, convert to selector string
+@@ -4506,7 +4700,11 @@ async function handleFill(data) {
+       let selector = '';
+       
+       if (target.selector) {
+-        selector = target.selector;
++        const parsedSelector = parseCustomSelector(target.selector);
++        if (typeof parsedSelector === 'object' && parsedSelector.isXPath) {
++          return await fillInputXPath(parsedSelector.selector, value);
++        }
++        selector = parsedSelector;
+       } else if (target.role) {
+         // Handle role-based locators like 'role:textbox[name=Email]'
+         selector = `[role="${target.role}"]`;
+@@ -4547,10 +4745,18 @@ async function handleType(data) {
+     // If target is provided, find the element first
+     if (target) {
+       if (typeof target === 'string') {
+-        // Target is a CSS selector
+-        element = querySelectorDeep(document, target);
+-        if (!element) {
+-          throw new Error(`Target element not found: ${target}`);
++        // Target is a CSS selector - parse custom selector syntax first
++        const parsedSelector = parseCustomSelector(target);
++        if (typeof parsedSelector === 'object' && parsedSelector.isXPath) {
++          element = findElementByXPath(parsedSelector.selector);
++          if (!element) {
++            throw new Error(`Target element not found: ${target} (parsed as XPath: ${parsedSelector.selector})`);
++          }
++        } else {
++          element = querySelectorDeep(document, parsedSelector);
++          if (!element) {
++            throw new Error(`Target element not found: ${target} (parsed as: ${parsedSelector})`);
++          }
+         }
+       } else if (typeof target === 'object' && typeof target.x === 'number' && typeof target.y === 'number') {
+         // Target is coordinates - find element at those coordinates
+-- 
+2.50.0
+

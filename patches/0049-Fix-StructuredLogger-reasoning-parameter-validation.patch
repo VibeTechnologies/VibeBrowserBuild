@@ -1,0 +1,47 @@
+From 321fa1d55c56df55f0062b1b02106b1511883166 Mon Sep 17 00:00:00 2001
+From: Den <2119348+dzianisv@users.noreply.github.com>
+Date: Sat, 26 Jul 2025 23:18:45 +0300
+Subject: [PATCH 49/91] Fix StructuredLogger reasoning parameter validation
+
+- Added null-safe string conversion for reasoning parameter in logReasoning method
+- Prevents "Cannot read properties of undefined (reading 'length')" errors
+- Ensures reasoning is always a string before calling string methods (substring, split, toLowerCase)
+- Handles undefined, null, or non-string reasoning values gracefully
+- This fixes the runtime error that was causing tool execution failures in the AI agent
+
+Root cause: StructuredLogger.logReasoning() was called with undefined reasoning parameter,
+causing errors when trying to call string methods like split(), substring(), toLowerCase()
+---
+ .../browser/resources/vibe/tools/StructuredLogger.js  | 11 +++++++----
+ 1 file changed, 7 insertions(+), 4 deletions(-)
+
+diff --git a/chrome/browser/resources/vibe/tools/StructuredLogger.js b/chrome/browser/resources/vibe/tools/StructuredLogger.js
+index 9817a77392..1b7f18206d 100644
+--- a/chrome/browser/resources/vibe/tools/StructuredLogger.js
++++ b/chrome/browser/resources/vibe/tools/StructuredLogger.js
+@@ -61,15 +61,18 @@ export class StructuredLogger {
+    * @param {number} iteration - Current iteration number
+    */
+   logReasoning(reasoning, context, iteration) {
++    // Ensure reasoning is a string
++    const reasoningText = typeof reasoning === 'string' ? reasoning : (reasoning ? String(reasoning) : '');
++    
+     this.addLogEntry({
+       type: 'reasoning',
+-      content: reasoning.substring(0, 1000), // Limit length
++      content: reasoningText.substring(0, 1000), // Limit length
+       context: context,
+       iteration: iteration,
+       metadata: {
+-        wordCount: reasoning.split(' ').length,
+-        hasGoalMention: reasoning.toLowerCase().includes('goal'),
+-        hasNextStepMention: reasoning.toLowerCase().includes('next')
++        wordCount: reasoningText.split(' ').length,
++        hasGoalMention: reasoningText.toLowerCase().includes('goal'),
++        hasNextStepMention: reasoningText.toLowerCase().includes('next')
+       }
+     });
+   }
+-- 
+2.50.0
+

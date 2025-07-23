@@ -1,0 +1,118 @@
+From 868512d9156bb351394002977f6ecb4a3685f19b Mon Sep 17 00:00:00 2001
+From: Den <2119348+dzianisv@users.noreply.github.com>
+Date: Sat, 26 Jul 2025 14:38:51 +0300
+Subject: [PATCH 42/91] Improve chat4 tooling with better JSON and markdown
+ rendering
+
+- Added markdown rendering support with basic formatting (bold, italic, code blocks, inline code)
+- Fixed JSON display in reasoning updates by parsing and formatting structured output
+- Enhanced reasoning update handler to convert JSON thinking into readable format
+- Added marked dependency for future markdown enhancements
+- Improved message rendering with proper HTML formatting
+- Better visual presentation of AI thinking processes with confidence scores
+---
+ .../resources/vibe/apps/chat4/package.json    |  1 +
+ .../chat4/src/components/chat/ChatPage.tsx    | 16 +++++++-
+ .../chat4/src/components/chat/Message.tsx     | 38 ++++++++++++++++++-
+ 3 files changed, 52 insertions(+), 3 deletions(-)
+
+diff --git a/chrome/browser/resources/vibe/apps/chat4/package.json b/chrome/browser/resources/vibe/apps/chat4/package.json
+index bbc6079db6..9116a9b57f 100644
+--- a/chrome/browser/resources/vibe/apps/chat4/package.json
++++ b/chrome/browser/resources/vibe/apps/chat4/package.json
+@@ -24,6 +24,7 @@
+     "class-variance-authority": "^0.7.1",
+     "clsx": "^2.1.1",
+     "lucide-react": "^0.525.0",
++    "marked": "^9.1.6",
+     "next": "15.4.4",
+     "react": "19.1.0",
+     "react-dom": "19.1.0",
+diff --git a/chrome/browser/resources/vibe/apps/chat4/src/components/chat/ChatPage.tsx b/chrome/browser/resources/vibe/apps/chat4/src/components/chat/ChatPage.tsx
+index 3286741ec1..b6c6af2aa1 100644
+--- a/chrome/browser/resources/vibe/apps/chat4/src/components/chat/ChatPage.tsx
++++ b/chrome/browser/resources/vibe/apps/chat4/src/components/chat/ChatPage.tsx
+@@ -162,9 +162,23 @@ export function ChatPage() {
+       
+       // Add reasoning update as actual chat message
+       if (update.reasoning && update.reasoning.trim()) {
++        let formattedReasoning = update.reasoning
++        
++        // Try to parse and format JSON reasoning
++        try {
++          const jsonMatch = update.reasoning.match(/^(\{.*\})$/s)
++          if (jsonMatch) {
++            const parsed = JSON.parse(jsonMatch[1])
++            formattedReasoning = `**Thinking Analysis:**\n\n${parsed.thinking || 'Processing...'}\n\n**Evaluation:** ${parsed.evaluation || 'Assessing situation...'}\n\n**Next Goal:** ${parsed.next_goal || 'Determining next steps...'}\n\n**Confidence:** ${Math.round((parsed.confidence || 0) * 100)}%`
++          }
++        } catch (error) {
++          // Keep original reasoning if JSON parsing fails
++          console.log('Non-JSON reasoning content, displaying as-is')
++        }
++        
+         const reasoningMessage: MessageData = {
+           id: generateId(),
+-          content: `🧠 **Thinking (Step ${update.iteration})**:\n\n${update.reasoning}`,
++          content: `🧠 **Thinking (Step ${update.iteration})**:\n\n${formattedReasoning}`,
+           role: "assistant",
+           timestamp: new Date()
+         }
+diff --git a/chrome/browser/resources/vibe/apps/chat4/src/components/chat/Message.tsx b/chrome/browser/resources/vibe/apps/chat4/src/components/chat/Message.tsx
+index 72f9569d7e..16608fa88b 100644
+--- a/chrome/browser/resources/vibe/apps/chat4/src/components/chat/Message.tsx
++++ b/chrome/browser/resources/vibe/apps/chat4/src/components/chat/Message.tsx
+@@ -16,6 +16,40 @@ interface MessageProps {
+   message: MessageData
+ }
+ 
++// Simple markdown renderer for basic formatting
++const renderMarkdown = (content: string) => {
++  // Handle JSON detection and formatting
++  const jsonMatch = content.match(/^(\{.*\})$/s)
++  if (jsonMatch) {
++    try {
++      const parsed = JSON.parse(jsonMatch[1])
++      return (
++        <div className="bg-gray-100 dark:bg-gray-800 p-3 rounded-lg font-mono text-sm overflow-x-auto">
++          <div className="text-xs text-gray-500 mb-2">JSON Response:</div>
++          <pre className="whitespace-pre-wrap">{JSON.stringify(parsed, null, 2)}</pre>
++        </div>
++      )
++    } catch {
++      // Fall through to normal rendering if JSON parsing fails
++    }
++  }
++
++  // Basic markdown parsing
++  let html = content
++    // Bold text
++    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
++    // Italic text  
++    .replace(/\*(.*?)\*/g, '<em>$1</em>')
++    // Code blocks
++    .replace(/```([\s\S]*?)```/g, '<pre class="bg-gray-100 dark:bg-gray-800 p-3 rounded-lg overflow-x-auto"><code>$1</code></pre>')
++    // Inline code
++    .replace(/`([^`]+)`/g, '<code class="bg-gray-100 dark:bg-gray-800 px-1 py-0.5 rounded text-sm">$1</code>')
++    // Line breaks
++    .replace(/\n/g, '<br>')
++
++  return <div dangerouslySetInnerHTML={{ __html: html }} />
++}
++
+ export function Message({ message }: MessageProps) {
+   const isAssistant = message.role === "assistant"
+   const [copied, setCopied] = useState(false)
+@@ -44,8 +78,8 @@ export function Message({ message }: MessageProps) {
+             ? "bg-transparent" 
+             : "bg-transparent"
+         }`}>
+-          <div className="text-[15px] leading-7 text-gray-800 dark:text-gray-100 font-normal whitespace-pre-wrap font-['Söhne','-apple-system','BlinkMacSystemFont','Segoe_UI','Roboto','Oxygen','Ubuntu','Cantarell','Fira_Sans','Droid_Sans','Helvetica_Neue','sans-serif']">
+-            {message.content}
++          <div className="text-[15px] leading-7 text-gray-800 dark:text-gray-100 font-normal font-['Söhne','-apple-system','BlinkMacSystemFont','Segoe_UI','Roboto','Oxygen','Ubuntu','Cantarell','Fira_Sans','Droid_Sans','Helvetica_Neue','sans-serif']">
++            {renderMarkdown(message.content)}
+           </div>
+           
+           {/* Copy button - only show for assistant messages and on hover */}
+-- 
+2.50.0
+

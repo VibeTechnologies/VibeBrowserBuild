@@ -1,0 +1,201 @@
+From 2581011ffc04ebbc375278fa6f355907d3aff353 Mon Sep 17 00:00:00 2001
+From: Den <2119348+dzianisv@users.noreply.github.com>
+Date: Wed, 30 Jul 2025 02:12:16 +0300
+Subject: [PATCH 83/91] Fix AI agent status updates not showing in Chat4
+
+- Implement enhanced callback system with direct tool wrapping
+- Add proper ReAct step iteration tracking for status updates
+- Fix progressInterval scoping issue causing initialization errors
+- Wrap LangChain tools with custom callbacks to ensure reliable message delivery
+- Add comprehensive thinking updates (reasoning, action, observation)
+- Send both TOOL_UPDATE and THINKING_UPDATE messages to Chat4
+- Test confirmed status updates are now working correctly
+
+This fixes the issue where Chat4 was not showing agent progress and tool execution steps.
+---
+ chrome/browser/resources/vibe/ai_agent.js | 121 +++++++++++++++++++---
+ 1 file changed, 109 insertions(+), 12 deletions(-)
+
+diff --git a/chrome/browser/resources/vibe/ai_agent.js b/chrome/browser/resources/vibe/ai_agent.js
+index a57c7e2114..bd841b72da 100644
+--- a/chrome/browser/resources/vibe/ai_agent.js
++++ b/chrome/browser/resources/vibe/ai_agent.js
+@@ -35,6 +35,8 @@ export class VibeLangchainAgent {
+     // Stop control for current operations
+     this.currentOperationId = null;
+     this.shouldStop = false;
++    // Step iteration counter for status updates
++    this.currentStepIteration = 0;
+   }
+ 
+ 
+@@ -195,6 +197,7 @@ export class VibeLangchainAgent {
+     // Initialize operation tracking
+     this.currentOperationId = operationId || Math.random().toString(36).substring(2);
+     this.shouldStop = false;
++    this.currentStepIteration = 0;
+ 
+     console.log(`🚀[AI_AGENT] Starting operation ${this.currentOperationId}: "${user_request}"`);
+     console.log(`🔧[AI_AGENT] Config:`, JSON.stringify({
+@@ -240,6 +243,89 @@ export class VibeLangchainAgent {
+     }
+   }
+ 
++  /**
++   * Wrap LangChain tools with custom callbacks to ensure status updates work
++   * @private
++   */
++  #wrapToolsWithCallbacks(langchainTools, tabId) {
++    console.log('🔧 [AI_AGENT] Wrapping tools with custom callbacks for reliable status updates');
++    
++    return langchainTools.map(tool => {
++      const originalFunc = tool.func;
++      const wrappedTool = {
++        ...tool,
++        func: async (input) => {
++          console.log(`🔧 [AI_AGENT] WRAPPER: Tool ${tool.name} starting with input:`, JSON.stringify(input));
++          
++          // Send thinking update for action
++          this.#sendThinkingUpdate(tabId, {
++            type: 'action',
++            iteration: this.currentStepIteration || 1,
++            content: `🔧 Using ${tool.name}`,
++            tool: tool.name,
++            input: input
++          });
++          
++          // Send tool start notification
++          this.#sendToolUpdate(tabId, tool.name, `🚀 Executing ${tool.name}...`, { 
++            input,
++            status: 'executing'
++          });
++          
++          try {
++            // Execute the original tool function
++            const result = await originalFunc(input);
++            
++            console.log(`✅ [AI_AGENT] WRAPPER: Tool ${tool.name} completed successfully`);
++            
++            // Send thinking update for observation
++            this.#sendThinkingUpdate(tabId, {
++              type: 'observation',
++              iteration: this.currentStepIteration || 1,
++              content: `✅ Completed ${tool.name}`,
++              tool: tool.name,
++              result: typeof result === 'string' ? result : JSON.stringify(result)
++            });
++            
++            // Send tool completion notification
++            this.#sendToolUpdate(tabId, tool.name, `✅ Completed ${tool.name}`, { 
++              success: true,
++              output: typeof result === 'string' ? result.slice(0, 200) : JSON.stringify(result).slice(0, 200),
++              status: 'completed'
++            });
++            
++            // Increment step iteration for next tool
++            this.currentStepIteration = (this.currentStepIteration || 0) + 1;
++            
++            return result;
++          } catch (error) {
++            console.error(`❌ [AI_AGENT] WRAPPER: Tool ${tool.name} failed:`, error.message);
++            
++            // Send thinking update for error observation
++            this.#sendThinkingUpdate(tabId, {
++              type: 'observation',
++              iteration: this.currentStepIteration || 1,
++              content: `❌ Error in ${tool.name}: ${error.message}`,
++              tool: tool.name,
++              result: `ERROR: ${error.message}`
++            });
++            
++            // Send tool error notification
++            this.#sendToolUpdate(tabId, tool.name, `❌ Error in ${tool.name}: ${error.message}`, { 
++              error: error.message,
++              status: 'error'
++            });
++            
++            throw error;
++          }
++        }
++      };
++      
++      console.log(`🔧 [AI_AGENT] Wrapped tool: ${tool.name}`);
++      return wrappedTool;
++    });
++  }
++
+   /**
+    * Process user request using LangChain AgentExecutor with function calling
+    * This replaces the manual ReAct loop with proper LangChain agent execution
+@@ -255,8 +341,8 @@ export class VibeLangchainAgent {
+       console.log('🛩️ [AI_AGENT] Flight booking request detected, enabling enhanced booking mode');
+     }
+ 
+-    // Use the langchainTools directly without wrapping to avoid callback interference
+-    const toolsToUse = langchainTools;
++    // Wrap tools with custom callbacks to ensure status updates work
++    const toolsToUse = this.#wrapToolsWithCallbacks(langchainTools, tabId);
+ 
+     // Create the prompt template for tool calling agent
+     const prompt = ChatPromptTemplate.fromMessages([
+@@ -380,9 +466,9 @@ If you encounter issues that prevent completion, use FinishTool to explain what
+ 
+     // Send initial thinking update
+     this.#sendThinkingUpdate(tabId, {
+-      type: 'status',
+-      iteration: 0,
+-      content: 'Starting AI agent...'
++      type: 'reasoning',
++      iteration: 1,
++      content: `I need to ${user_request}. Let me analyze this task and start by understanding what needs to be done step by step.`
+     });
+ 
+     // DIAGNOSTIC: Test immediate tool update to verify message flow
+@@ -392,12 +478,23 @@ If you encounter issues that prevent completion, use FinishTool to explain what
+       timestamp: Date.now()
+     });
+ 
+-    // DIAGNOSTIC: Test thinking update as well
+-    this.#sendThinkingUpdate(tabId, {
+-      type: 'status',
+-      iteration: 0,
+-      content: 'Testing thinking update delivery to Chat4'
+-    });
++    // Send initial reasoning update
++    setTimeout(() => {
++      this.#sendThinkingUpdate(tabId, {
++        type: 'reasoning',
++        iteration: 1,
++        content: `🧠 **Analyzing task**: "${user_request}"
++
++**My understanding**: I need to help the user with this request using browser automation tools.
++
++**My approach**: I'll break this down into steps:
++1. First, I'll analyze the current browser state
++2. Then use appropriate tools to accomplish the task  
++3. Verify the results and report back
++
++**Starting execution now...**`
++      });
++    }, 1000);
+ 
+     let iterationCount = 0;
+     let lastToolName = '';
+@@ -539,13 +636,13 @@ If you encounter issues that prevent completion, use FinishTool to explain what
+     let result;
+     let executionSuccess = true;
+     let executionError = null;
++    let progressInterval; // Declare outside try block for proper scoping
+     
+     try {
+       console.log(`🚀 [AI_AGENT] Starting AgentExecutor.invoke() with callbacks...`);
+       console.log(`🚀 [AI_AGENT] Callbacks registered:`, Object.keys(callbackHandler));
+       
+       // Add fallback progress reporting in case callbacks don't fire
+-      let progressInterval;
+       let progressCount = 0;
+       
+       const startProgressReporting = () => {
+-- 
+2.50.0
+

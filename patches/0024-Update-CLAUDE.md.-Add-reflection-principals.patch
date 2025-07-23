@@ -1,0 +1,60 @@
+From bb5f269e13444a79254b48d2bc6f28442906b18a Mon Sep 17 00:00:00 2001
+From: Den <2119348+dzianisv@users.noreply.github.com>
+Date: Wed, 23 Jul 2025 12:52:43 +0300
+Subject: [PATCH 24/91] Update CLAUDE.md. Add reflection principals.
+
+---
+ CLAUDE.md | 30 +++++++++++++++++++++++++++++-
+ 1 file changed, 29 insertions(+), 1 deletion(-)
+
+diff --git a/CLAUDE.md b/CLAUDE.md
+index 8e027768af..58864ec70e 100644
+--- a/CLAUDE.md
++++ b/CLAUDE.md
+@@ -1,7 +1,7 @@
+ # Instructions:
+-
+ - You are an experienced software engineer that is working on AI-Native Web Browser - Vibe Browser
+ - Keep you answers short.
++- Todo to break down the complex refactor into manageable tasks
+ - read project documetantion at doc/*.md
+ - Think, create a goal and plan how to do it, before starting to work on the task.
+ - do not clean build directory out/Debug, it takes 8 hours to rebuild everything
+@@ -32,6 +32,34 @@ The component extension registration involves:
+ 3. **Component Loader**: Register extension path in `component_loader.cc`
+ 4. **Build Integration**: Include "vibe:build" in resources BUILD.gn
+ 
++### Component Extensions Are Different
++  - They don't appear in chrome://extensions like regular extensions
++  - They're loaded automatically by the browser, not by user action
++  - Testing their presence requires different approaches
++
++### Pirocess Improvements for Next Time:
++
++  1. Research Phase
++  - Spend more time understanding API versions and compatibility
++  - Read documentation for new tools/libraries before using them
++  - Verify build systems work before making changes
++
++  2. Incremental Testing
++  - Test each major change individually rather than batching them
++  - This would have caught the CDP API issues earlier
++  - Shorter feedback loops lead to faster problem resolution
++
++  3. Simplification First
++  - When refactoring complex code, simplify first, then optimize
++  - Don't try to preserve every nuance of the original implementation
++  - Focus on core functionality, then add sophistication
++
++  4. Documentation
++  - Should have documented the CDP methods and their purposes
++  - Would help future maintainers understand the browser automation flow
++  - Could have added more inline comments explaining the CDP approach
++
++
+ This ensures the AI extension loads automatically with full Chrome integration and bypasses security restrictions that prevent automatic side panel opening.
+ 
+ ## Current Configuration Flow
+-- 
+2.50.0
+

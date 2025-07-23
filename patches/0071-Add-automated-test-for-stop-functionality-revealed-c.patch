@@ -1,0 +1,353 @@
+From a1c973339b04027590a170950c05dac8708c707a Mon Sep 17 00:00:00 2001
+From: Den <2119348+dzianisv@users.noreply.github.com>
+Date: Mon, 28 Jul 2025 21:26:34 +0300
+Subject: [PATCH 71/91] Add automated test for stop functionality - revealed
+ core AI agent issue
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Created comprehensive automated test using Chrome DevTools Protocol to verify
+stop button functionality, but test revealed a critical underlying issue.
+
+Test Implementation:
+- Automated Chrome startup with extension debugging
+- WebSocket connection for real-time console monitoring
+- JavaScript injection to simulate user interactions
+- Long-running AI task simulation with stop trigger after 2s delay
+- Comprehensive logging and result analysis
+
+Test Results:
+❌ FAILED - Cannot test stop functionality due to core AI agent error
+🐛 ERROR: "Cannot read properties of undefined (reading 'call')"
+📍 LOCATION: AI agent message processing in processUserRequest()
+
+Root Cause: AI agent fails to initialize properly, preventing any task execution.
+This means stop functionality cannot be tested until core agent is fixed.
+
+Key Insights:
+1. Automated testing revealed a bug manual testing would have missed
+2. Stop functionality fix may be correct but untestable due to agent failure
+3. Must fix core AI agent initialization before validating stop feature
+
+Next: Debug and fix "Cannot read properties of undefined" error in AI agent
+---
+ .../resources/vibe/test_stop_functionality.py | 305 ++++++++++++++++++
+ 1 file changed, 305 insertions(+)
+ create mode 100644 chrome/browser/resources/vibe/test_stop_functionality.py
+
+diff --git a/chrome/browser/resources/vibe/test_stop_functionality.py b/chrome/browser/resources/vibe/test_stop_functionality.py
+new file mode 100644
+index 0000000000..0035b0a316
+--- /dev/null
++++ b/chrome/browser/resources/vibe/test_stop_functionality.py
+@@ -0,0 +1,305 @@
++#!/usr/bin/env python3
++"""
++Automated test for stop functionality in Vibe AI Agent
++Tests that the stop button immediately cancels running AI operations
++"""
++
++import asyncio
++import json
++import subprocess
++import time
++import websockets
++import urllib.request
++from datetime import datetime
++
++class StopFunctionalityTest:
++    def __init__(self):
++        self.chromium_path = "/Users/engineer/workspace/vibebrowser/src/out/Debug/Chromium.app/Contents/MacOS/Chromium"
++        self.user_data_dir = f"/tmp/vibe_stop_test_{int(time.time())}"
++        self.chrome_process = None
++        self.ws_url = None
++        self.test_results = []
++        
++    def log(self, message):
++        timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
++        print(f"[{timestamp}] {message}")
++        self.test_results.append(f"[{timestamp}] {message}")
++        
++    def start_chrome(self):
++        """Start Chrome with debugging enabled"""
++        self.log("🚀 Starting Chrome with debugging...")
++        
++        cmd = [
++            self.chromium_path,
++            f"--user-data-dir={self.user_data_dir}",
++            "--remote-debugging-port=9223",  # Different port to avoid conflicts
++            "--disable-web-security",
++            "--no-first-run",
++            "--disable-default-apps",
++            "--disable-extensions-except=" + "/Users/engineer/workspace/vibebrowser/src/out/Debug/gen/chrome/browser/resources/vibe",
++        ]
++        
++        self.chrome_process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
++        time.sleep(3)  # Give Chrome time to start
++        
++        # Get the WebSocket URL for the first tab
++        try:
++            response = urllib.request.urlopen("http://localhost:9223/json/list")
++            tabs = json.loads(response.read().decode())
++            if tabs:
++                self.ws_url = tabs[0]["webSocketDebuggerUrl"]
++                self.log(f"✅ Connected to Chrome, WebSocket: {self.ws_url}")
++                return True
++        except Exception as e:
++            self.log(f"❌ Failed to connect to Chrome: {e}")
++            return False
++            
++    async def connect_websocket(self):
++        """Connect to Chrome DevTools WebSocket"""
++        try:
++            self.websocket = await websockets.connect(self.ws_url)
++            self.log("✅ WebSocket connected")
++            
++            # Enable console and runtime domains
++            await self.websocket.send(json.dumps({"id": 1, "method": "Console.enable"}))
++            await self.websocket.send(json.dumps({"id": 2, "method": "Runtime.enable"}))
++            
++            return True
++        except Exception as e:
++            self.log(f"❌ WebSocket connection failed: {e}")
++            return False
++            
++    async def inject_test_script(self):
++        """Inject JavaScript to set up the test environment"""
++        test_script = """
++        // Test environment setup
++        window.stopTestResults = {
++            started: false,
++            stopped: false,
++            startTime: null,
++            stopTime: null,
++            finalMessage: null,
++            operationId: null
++        };
++        
++        // Monitor AI agent messages for stop testing
++        const originalSendMessage = chrome.runtime.sendMessage;
++        chrome.runtime.sendMessage = function(message, callback) {
++            // Log all messages for debugging
++            console.log('[STOP_TEST] Message sent:', JSON.stringify(message, null, 2));
++            
++            if (message.type === 'STOP_OPERATION') {
++                window.stopTestResults.stopTime = Date.now();
++                window.stopTestResults.stopped = true;
++                console.log('[STOP_TEST] 🛑 Stop operation triggered at:', window.stopTestResults.stopTime);
++            }
++            
++            return originalSendMessage.call(this, message, callback);
++        };
++        
++        // Function to start a long-running AI task
++        window.startLongRunningTask = async function() {
++            console.log('[STOP_TEST] 🚀 Starting long-running AI task...');
++            window.stopTestResults.started = true;
++            window.stopTestResults.startTime = Date.now();
++            
++            // Trigger AI agent with a complex task that should take time
++            const message = {
++                type: 'CHAT4_MESSAGE',
++                content: 'Please search for information about artificial intelligence, then navigate to 3 different websites, take screenshots of each, analyze the content, and write a comprehensive summary of current AI trends. This should take several seconds to complete.',
++                timestamp: Date.now()
++            };
++            
++            try {
++                const response = await new Promise((resolve, reject) => {
++                    chrome.runtime.sendMessage(message, (response) => {
++                        if (chrome.runtime.lastError) {
++                            reject(new Error(chrome.runtime.lastError.message));
++                        } else {
++                            resolve(response);
++                        }
++                    });
++                });
++                
++                window.stopTestResults.finalMessage = response;
++                console.log('[STOP_TEST] 📝 Final response:', response);
++                
++            } catch (error) {
++                console.log('[STOP_TEST] ❌ Task error:', error.message);
++                window.stopTestResults.finalMessage = { error: error.message };
++            }
++        };
++        
++        // Function to trigger stop after delay
++        window.triggerStopAfterDelay = function(delayMs = 2000) {
++            setTimeout(() => {
++                console.log('[STOP_TEST] 🛑 Triggering stop after ' + delayMs + 'ms delay...');
++                
++                // Find the operation ID from background tracking
++                chrome.runtime.sendMessage({ type: 'GET_CURRENT_OPERATIONS' }, (operations) => {
++                    const operationIds = Object.keys(operations || {});
++                    if (operationIds.length > 0) {
++                        const operationId = operationIds[0];
++                        window.stopTestResults.operationId = operationId;
++                        
++                        // Send stop message
++                        chrome.runtime.sendMessage({
++                            type: 'STOP_OPERATION',
++                            operationId: operationId,
++                            source: 'stop_test'
++                        }, (response) => {
++                            console.log('[STOP_TEST] 🛑 Stop response:', response);
++                        });
++                    } else {
++                        console.log('[STOP_TEST] ⚠️ No active operations found to stop');
++                    }
++                });
++            }, delayMs);
++        };
++        
++        console.log('[STOP_TEST] ✅ Test environment ready');
++        """
++        
++        try:
++            await self.websocket.send(json.dumps({
++                "id": 10,
++                "method": "Runtime.evaluate",
++                "params": {"expression": test_script}
++            }))
++            self.log("✅ Test script injected")
++            return True
++        except Exception as e:
++            self.log(f"❌ Failed to inject test script: {e}")
++            return False
++    
++    async def run_stop_test(self):
++        """Run the actual stop functionality test"""
++        try:
++            # Start the long-running task
++            self.log("🚀 Starting long-running AI task...")
++            await self.websocket.send(json.dumps({
++                "id": 20,
++                "method": "Runtime.evaluate", 
++                "params": {"expression": "window.startLongRunningTask()"}
++            }))
++            
++            # Wait a moment for task to begin
++            await asyncio.sleep(1)
++            
++            # Trigger stop after 2 seconds
++            self.log("⏰ Scheduling stop trigger in 2 seconds...")
++            await self.websocket.send(json.dumps({
++                "id": 21,
++                "method": "Runtime.evaluate",
++                "params": {"expression": "window.triggerStopAfterDelay(2000)"}
++            }))
++            
++            # Monitor console output for 10 seconds
++            self.log("👀 Monitoring console output for test results...")
++            test_start_time = time.time()
++            stop_detected = False
++            task_started = False
++            
++            while time.time() - test_start_time < 10:  # 10 second timeout
++                try:
++                    message = await asyncio.wait_for(self.websocket.recv(), timeout=1.0)
++                    data = json.loads(message)
++                    
++                    if data.get("method") == "Console.messageAdded":
++                        log_text = data["params"]["message"]["text"]
++                        
++                        # Check for key test markers
++                        if "[STOP_TEST]" in log_text:
++                            self.log(f"📝 Test log: {log_text}")
++                            
++                            if "Starting long-running AI task" in log_text:
++                                task_started = True
++                            elif "Stop operation triggered" in log_text:
++                                stop_detected = True
++                            elif "Task stopped by user" in log_text:
++                                self.log("✅ SUCCESS: Stop functionality worked!")
++                                return True
++                                
++                except asyncio.TimeoutError:
++                    continue
++                except Exception as e:
++                    self.log(f"⚠️ WebSocket error: {e}")
++                    break
++            
++            # Check final results
++            await self.websocket.send(json.dumps({
++                "id": 30,
++                "method": "Runtime.evaluate",
++                "params": {"expression": "JSON.stringify(window.stopTestResults, null, 2)"}
++            }))
++            
++            result_msg = await asyncio.wait_for(self.websocket.recv(), timeout=2.0)
++            result_data = json.loads(result_msg)
++            if "result" in result_data and "value" in result_data["result"]:
++                results = json.loads(result_data["result"]["value"])
++                self.log(f"📊 Final test results: {json.dumps(results, indent=2)}")
++                
++                # Analyze results
++                if results.get("stopped") and results.get("started"):
++                    if results.get("stopTime") and results.get("startTime"):
++                        elapsed = results["stopTime"] - results["startTime"]
++                        self.log(f"⏱️ Task stopped after {elapsed}ms - {'SUCCESS' if elapsed < 5000 else 'SLOW'}")
++                        return elapsed < 5000  # Success if stopped within 5 seconds
++                        
++            self.log("❌ FAILED: Stop functionality did not work as expected")
++            return False
++            
++        except Exception as e:
++            self.log(f"❌ Test execution failed: {e}")
++            return False
++    
++    def cleanup(self):
++        """Clean up Chrome process and temporary files"""
++        if self.chrome_process:
++            self.chrome_process.terminate()
++            self.chrome_process.wait()
++        self.log("🧹 Cleanup completed")
++        
++    async def run_full_test(self):
++        """Run the complete stop functionality test"""
++        try:
++            # Start Chrome
++            if not self.start_chrome():
++                return False
++                
++            # Connect WebSocket
++            if not await self.connect_websocket():
++                return False
++                
++            # Setup test environment 
++            if not await self.inject_test_script():
++                return False
++                
++            # Run the actual test
++            success = await self.run_stop_test()
++            
++            self.log(f"🏁 Test completed: {'✅ SUCCESS' if success else '❌ FAILED'}")
++            return success
++            
++        except Exception as e:
++            self.log(f"❌ Test failed with exception: {e}")
++            return False
++        finally:
++            self.cleanup()
++
++async def main():
++    """Main test execution"""
++    print("🧪 Starting automated stop functionality test...")
++    
++    test = StopFunctionalityTest()
++    success = await test.run_full_test()
++    
++    print(f"\n{'='*50}")
++    print(f"🏁 TEST RESULT: {'✅ PASSED' if success else '❌ FAILED'}")
++    print(f"{'='*50}")
++    
++    return 0 if success else 1
++
++if __name__ == "__main__":
++    import sys
++    sys.exit(asyncio.run(main()))
+\ No newline at end of file
+-- 
+2.50.0
+

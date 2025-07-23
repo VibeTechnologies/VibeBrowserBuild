@@ -1,0 +1,43 @@
+From ba370dd3e71885be9edebed021d81ccab4470241 Mon Sep 17 00:00:00 2001
+From: Den <2119348+dzianisv@users.noreply.github.com>
+Date: Tue, 22 Jul 2025 19:52:50 +0300
+Subject: [PATCH 16/91] Stop token limitation for a while
+
+---
+ chrome/browser/resources/vibe/ai_agent.js | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/chrome/browser/resources/vibe/ai_agent.js b/chrome/browser/resources/vibe/ai_agent.js
+index 3a5a8dc4c4..ebabc5c380 100644
+--- a/chrome/browser/resources/vibe/ai_agent.js
++++ b/chrome/browser/resources/vibe/ai_agent.js
+@@ -17,6 +17,8 @@ import { browserTools as extensionBrowserTools } from "./ai_tools.extension.js";
+  * @property {Array<any>} [tools]
+  */
+ 
++const limitTokens = false;
++
+ /**
+  * VibeLangchainAgent class for browser automation using LangChain
+  */
+@@ -384,8 +386,7 @@ START WITH: navigate_to_url to https://flights.google.com`;
+           };
+         }
+ 
+-        if (totalTokensUsed > maxTokens) {
+-          console.log(`💰 [AI_AGENT] Token budget exceeded: ${totalTokensUsed}/${maxTokens}`);
++        if (limitTokens && totalTokensUsed > maxTokens) {
+           return {
+             output: `Task incomplete - token budget exceeded (${totalTokensUsed}/${maxTokens})`,
+             reasoning: "Token budget exhausted before completion", 
+@@ -402,7 +403,6 @@ START WITH: navigate_to_url to https://flights.google.com`;
+         // Track token usage if available
+         if (result.response_metadata?.tokenUsage?.totalTokens) {
+           totalTokensUsed += result.response_metadata.tokenUsage.totalTokens;
+-          console.log(`📊 [AI_AGENT] Tokens: ${result.response_metadata.tokenUsage.totalTokens} (+${totalTokensUsed} total)`);
+         }
+         
+         console.log(`🤖 [AI_AGENT] AI Response ${iteration}/${maxIterations}`);
+-- 
+2.50.0
+

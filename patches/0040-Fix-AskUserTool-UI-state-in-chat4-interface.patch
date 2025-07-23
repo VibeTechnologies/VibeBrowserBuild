@@ -1,0 +1,31 @@
+From 5d71de5e7010c85c89be84bdcd2c21a4da70a2d9 Mon Sep 17 00:00:00 2001
+From: Den <2119348+dzianisv@users.noreply.github.com>
+Date: Sat, 26 Jul 2025 14:32:27 +0300
+Subject: [PATCH 40/91] Fix AskUserTool UI state in chat4 interface
+
+- Updated placeholder text to be more clear when waiting for user input
+- Confirmed proper UI state handling:
+  * Stop button hidden when isProcessing=false
+  * Send button shown when isWaitingForUserInput=true
+  * Input field enabled when isWaitingForUserInput=true
+- AskUserTool detection works correctly in ChatPage.tsx lines 121-136
+---
+ .../resources/vibe/apps/chat4/src/components/chat/ChatInput.tsx | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/chrome/browser/resources/vibe/apps/chat4/src/components/chat/ChatInput.tsx b/chrome/browser/resources/vibe/apps/chat4/src/components/chat/ChatInput.tsx
+index 82ced3f0ee..e6de9eb751 100644
+--- a/chrome/browser/resources/vibe/apps/chat4/src/components/chat/ChatInput.tsx
++++ b/chrome/browser/resources/vibe/apps/chat4/src/components/chat/ChatInput.tsx
+@@ -57,7 +57,7 @@ export function ChatInput({
+             onKeyDown={handleKeyDown}
+             placeholder={
+               isWaitingForUserInput 
+-                ? "Type your response..." 
++                ? "Type your response to the AI's question..." 
+                 : isProcessing 
+                   ? "AI is processing..." 
+                   : "Ask Vibe AI"
+-- 
+2.50.0
+

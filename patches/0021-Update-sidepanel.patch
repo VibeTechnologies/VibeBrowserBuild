@@ -1,0 +1,495 @@
+From 9fc025eec04b69e838ce332fff07d81069cc0dce Mon Sep 17 00:00:00 2001
+From: Den <2119348+dzianisv@users.noreply.github.com>
+Date: Wed, 23 Jul 2025 00:32:18 +0300
+Subject: [PATCH 21/91] Update sidepanel
+
+---
+ chrome/browser/resources/vibe/BUILD.gn       |   2 +
+ chrome/browser/resources/vibe/esbuild.js     | 176 +++++++++++++++----
+ chrome/browser/resources/vibe/sidepanel.html |  39 +++-
+ chrome/browser/resources/vibe/sidepanel.js   | 157 +++++++++--------
+ 4 files changed, 252 insertions(+), 122 deletions(-)
+
+diff --git a/chrome/browser/resources/vibe/BUILD.gn b/chrome/browser/resources/vibe/BUILD.gn
+index 78757bbc39..5bdda01dcd 100644
+--- a/chrome/browser/resources/vibe/BUILD.gn
++++ b/chrome/browser/resources/vibe/BUILD.gn
+@@ -14,6 +14,7 @@ action("npm_build") {
+     "ai_agent.js",
+     "background.js",
+     "sidepanel.js",
++    "sidepanel.css",
+     "content.js",
+     "lib/contentExtractor.js",
+     "lib/readability.js",
+@@ -31,6 +32,7 @@ action("npm_build") {
+     "$target_gen_dir/background.js.map",
+     "$target_gen_dir/manifest.json",
+     "$target_gen_dir/sidepanel.html",
++    "$target_gen_dir/sidepanel.css",
+     "$target_gen_dir/sidepanel.js",
+     "$target_gen_dir/sidepanel.js.map",
+     "$target_gen_dir/content.js",
+diff --git a/chrome/browser/resources/vibe/esbuild.js b/chrome/browser/resources/vibe/esbuild.js
+index 9febcf71eb..a4fd0c0b92 100644
+--- a/chrome/browser/resources/vibe/esbuild.js
++++ b/chrome/browser/resources/vibe/esbuild.js
+@@ -10,47 +10,145 @@ const __dirname = path.dirname(__filename);
+ const isProd = process.env.NODE_ENV === 'production';
+ const outDir = process.argv[2] || "dist";
+ 
+-function copyStaticfiles() {
+-    const filesToCopy = ['manifest.json', 'sidepanel.html', 'assets/icon16.png', 'assets/icon48.png', 'assets/icon128.png'];
++// Ensure output directory exists
++function ensureDirectoryExists(filePath) {
++  const dirname = path.dirname(filePath);
++  if (fs.existsSync(dirname)) {
++    return true;
++  }
++  ensureDirectoryExists(dirname);
++  fs.mkdirSync(dirname);
++}
++
++// Copy static files
++function copyStaticFiles() {
++  const filesToCopy = [
++    'manifest.json',
++    'sidepanel.html',
++    'assets/icon16.png',
++    'assets/icon48.png',
++    'assets/icon128.png'
++  ];
++  
++  filesToCopy.forEach(file => {
++    const srcPath = path.resolve(__dirname, file);
++    const destPath = path.resolve(__dirname, outDir, file);
++    
++    try {
++      ensureDirectoryExists(destPath);
++      fs.copyFileSync(srcPath, destPath);
++      console.log(`Copied ${file} to ${destPath}`);
++    } catch (err) {
++      console.error(`Error copying ${file}:`, err);
++      process.exit(1);
++    }
++  });
++}
++
++// Process CSS with PostCSS, Tailwind, and Autoprefixer
++async function processCSS() {
++  try {
++    const cssEntryPoints = ['sidepanel.css'];
++    const { default: postcss } = await import('postcss');
++    const { default: postcssImport } = await import('postcss-import');
++    const { default: tailwindcss } = await import('tailwindcss');
++    const { default: autoprefixer } = await import('autoprefixer');
++    const cssnano = isProd ? (await import('cssnano')).default : null;
++    
++    const plugins = [
++      postcssImport(),
++      tailwindcss(),
++      autoprefixer(),
++      ...(isProd ? [cssnano({ preset: 'default' })] : [])
++    ];
++    
++    for (const cssFile of cssEntryPoints) {
++      const inputPath = path.resolve(__dirname, cssFile);
++      const outputPath = path.resolve(__dirname, outDir, cssFile);
+       
+-      filesToCopy.forEach(file => {
+-        const srcPath = path.resolve(__dirname, file);
+-        const destPath = path.resolve(__dirname, outDir, file);
++      try {
++        // Read the CSS file
++        const css = await fs.promises.readFile(inputPath, 'utf8');
++        
++        // Process with PostCSS
++        const result = await postcss(plugins).process(css, {
++          from: inputPath,
++          to: outputPath,
++          map: !isProd && { inline: false }
++        });
++        
++        // Ensure output directory exists
++        ensureDirectoryExists(outputPath);
+         
+-        try {
+-          // Ensure the destination directory exists
+-          fs.mkdirSync(path.dirname(destPath), { recursive: true });
+-          
+-          // Copy the file
+-          fs.copyFileSync(srcPath, destPath);
+-          console.log(`Copied ${file} to ${destPath}`);
+-        } catch (err) {
+-          console.error(`Error copying ${file}:`, err);
+-          process.exit(1);
++        // Write the processed CSS
++        await fs.promises.writeFile(outputPath, result.css, 'utf8');
++        
++        // Write source map if enabled
++        if (result.map) {
++          await fs.promises.writeFile(`${outputPath}.map`, result.map.toString(), 'utf8');
+         }
+-      });
++        
++        console.log(`✅ Processed ${cssFile} with PostCSS, Tailwind${isProd ? ', and CSSNano' : ''}`);
++      } catch (err) {
++        console.error(`❌ Error processing ${cssFile}:`, err);
++        throw err;
++      }
++    }
++  } catch (err) {
++    console.error('❌ CSS processing failed. Ensure all dependencies are installed:');
++    console.error('   npm install -D postcss postcss-import tailwindcss autoprefixer' + (isProd ? ' cssnano' : ''));
++    process.exit(1);
++  }
++}
++
++// Build JavaScript files
++async function buildJS() {
++  try {
++    await esbuild.build({
++      entryPoints: {
++        background: 'background.js',
++        sidepanel: 'sidepanel.js',
++        content: 'content.js',
++      },
++      bundle: true,
++      splitting: false,
++      format: 'iife',
++      outdir: outDir,
++      target: ['chrome112'],
++      sourcemap: true,
++      minify: isProd,
++      platform: 'browser',
++      external: [],
++      define: {
++        'process.env.NODE_ENV': isProd ? '"production"' : '"development"',
++        'global': 'globalThis'
++      },
++      inject: ['./lib/test/async_hooks_shim.js'],
++    });
++    
++    console.log('JavaScript build completed');
++  } catch (err) {
++    console.error('Error building JavaScript:', err);
++    process.exit(1);
++  }
++}
++
++// Main build function
++async function build() {
++  console.log('Starting build...');
++  
++  // Ensure output directory exists
++  ensureDirectoryExists(path.resolve(__dirname, outDir, 'dummy'));
++  
++  // Run builds in parallel
++  await Promise.all([
++    buildJS(),
++    processCSS(),
++    copyStaticFiles()
++  ]);
++  
++  console.log('Build completed successfully');
+ }
+ 
+-esbuild.build({
+-  entryPoints: {
+-    background: 'background.js',
+-    sidepanel: 'sidepanel.js',
+-    content: 'content.js',
+-  },
+-  bundle: true,
+-  splitting: false,          
+-  format: 'iife',
+-  outdir: outDir,
+-  target: ['chrome112'],
+-  sourcemap: true,
+-  minify: isProd,
+-  platform: 'browser',
+-  external: [], // Bundle all dependencies
+-  define: {
+-    'process.env.NODE_ENV': isProd ? '"production"' : '"development"',
+-    'global': 'globalThis'
+-  },
+-  inject: ['./lib/test/async_hooks_shim.js'],
+-}).catch(() => process.exit(1));
+-
+-copyStaticfiles();
+\ No newline at end of file
++// Run the build
++build().catch(console.error);
+\ No newline at end of file
+diff --git a/chrome/browser/resources/vibe/sidepanel.html b/chrome/browser/resources/vibe/sidepanel.html
+index 8cfee7160c..271f394d16 100644
+--- a/chrome/browser/resources/vibe/sidepanel.html
++++ b/chrome/browser/resources/vibe/sidepanel.html
+@@ -7,10 +7,8 @@
+   <link rel="preconnect" href="https://fonts.googleapis.com">
+   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+-  <link href="sidepanel.css" rel="stylesheet">
++  <link href="./sidepanel.css" rel="stylesheet">
+   <style>
+-    }
+-    
+     @media (prefers-color-scheme: dark), (forced-colors: active) {
+       .messages {
+         background-color: #292a2d;
+@@ -196,11 +194,12 @@
+               <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+             </svg>
+           </button>
+-
+-            autocomplete="off"
+-          >
+-          <button id="sendButton">Send</button>
+-          <button id="stopButton" style="display: none;">Stop</button>
++          <button id="stopButton" class="stop-button" style="display: none;">
++            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
++              <rect x="6" y="4" width="4" height="16"></rect>
++              <rect x="14" y="4" width="4" height="16"></rect>
++            </svg>
++          </button>
+         </div>
+       </div>
+       
+@@ -224,6 +223,30 @@
+     </div>
+   </div>
+ 
++  <!-- Templates -->
++  <template id="messageTemplate">
++    <div class="message">
++      <div class="message-content"></div>
++      <div class="message-timestamp"></div>
++    </div>
++  </template>
++
++  <template id="loaderTemplate">
++    <div class="message assistant-message">
++      <div class="message-loader">
++        <div class="loader-dot"></div>
++        <div class="loader-dot" style="animation-delay: 0.2s"></div>
++        <div class="loader-dot" style="animation-delay: 0.4s"></div>
++      </div>
++    </div>
++  </template>
++
++  <template id="quickActionTemplate">
++    <div class="quick-action">
++      <button class="quick-action-button"></button>
++    </div>
++  </template>
++
+   <script src="sidepanel.js"></script>
+ </body>
+ </html>
+\ No newline at end of file
+diff --git a/chrome/browser/resources/vibe/sidepanel.js b/chrome/browser/resources/vibe/sidepanel.js
+index 8837b8f2b9..08ed50fae7 100644
+--- a/chrome/browser/resources/vibe/sidepanel.js
++++ b/chrome/browser/resources/vibe/sidepanel.js
+@@ -781,54 +781,6 @@ class VibeAISidePanel {
+     
+     console.log('💡 [SIDE-PANEL] [sidepanel.js] Updated quick actions with', suggestions.length, 'suggestions');
+   }
+-  
+-  /**
+-   * Loads messages from storage
+-   */
+-  async loadMessages() {
+-    try {
+-      // Try to load messages from chrome.storage.local
+-      const result = await new Promise((resolve) => {
+-        chrome.storage.local.get(['vibe_chat_history'], resolve);
+-      });
+-      
+-      if (result && result.vibe_chat_history) {
+-        this.messageHistory = result.vibe_chat_history;
+-        
+-        // Clear existing messages
+-        this.messagesContainer.innerHTML = '';
+-        
+-        // Add each message to the UI
+-        this.messageHistory.forEach(msg => {
+-          this.addMessage(msg.type, msg.content, { 
+-            isHtml: msg.isHtml || false 
+-          });
+-        });
+-        
+-        console.log('📝 [SIDE-PANEL] [sidepanel.js] Loaded', this.messageHistory.length, 'messages from storage');
+-      }
+-    } catch (error) {
+-      console.error('❌ [SIDE-PANEL] [sidepanel.js] Error loading messages:', error);
+-    }
+-  }
+-  
+-  /**
+-   * Saves messages to storage
+-   */
+-  async saveMessages() {
+-    try {
+-      // Only keep the last 100 messages to prevent storage issues
+-      const messagesToSave = this.messageHistory.slice(-100);
+-      
+-      await new Promise((resolve) => {
+-        chrome.storage.local.set({ vibe_chat_history: messagesToSave }, resolve);
+-      });
+-      
+-      console.log('💾 [SIDE-PANEL] [sidepanel.js] Saved', messagesToSave.length, 'messages to storage');
+-    } catch (error) {
+-      console.error('❌ [SIDE-PANEL] [sidepanel.js] Error saving messages:', error);
+-    }
+-  }
+ 
+   /**
+    * Handles messages from the background script
+@@ -975,31 +927,85 @@ class VibeAISidePanel {
+    * @private
+    */
+   _processToolResults(toolResults) {
+-    toolResults.forEach(toolResult => {
+-      if (toolResult.tool === 'reasoning' && toolResult.args) {
+-        // Display thinking process
+-        if (toolResult.args.thinking) {
+-          this.addMessage("agent", `💭 **Thinking**: ${toolResult.args.thinking}`);
+-        }
+-        if (toolResult.args.evaluation) {
+-          this.addMessage("agent", `📊 **Evaluation**: ${toolResult.args.evaluation}`);
++    try {
++      toolResults.forEach(toolResult => {
++        if (toolResult.tool === 'reasoning' && toolResult.args) {
++          // Display thinking process
++          if (toolResult.args.thinking) {
++            this.addMessage("agent", `💭 **Thinking**: ${toolResult.args.thinking}`);
++          }
++          if (toolResult.args.evaluation) {
++            this.addMessage("agent", `📊 **Evaluation**: ${toolResult.args.evaluation}`);
++          }
++          if (toolResult.args.next_goal) {
++            this.addMessage("agent", `🎯 **Next Goal**: ${toolResult.args.next_goal}`);
++          }
++        } else if (toolResult.tool !== 'reasoning') {
++          // Display other tool results briefly
++          const result = toolResult.result;
++          if (result && !result.error) {
++            this.addMessage("system", `🔧 ${toolResult.tool}: ${typeof result === 'string' ? result : 'Success'}`);
++          } else if (result && result.error) {
++            this.addMessage("system", `❌ ${toolResult.tool}: ${result.error}`);
++          }
+         }
+-        if (toolResult.args.next_goal) {
+-          this.addMessage("agent", `🎯 **Next Goal**: ${toolResult.args.next_goal}`);
++      });
++    } catch (error) {
++      console.error("❌ [SIDE-PANEL] [sidepanel.js] Error in _processToolResults:", error);
++      this.addMessage("system", `❌ Error processing tool results: ${error.message || 'Unknown error'}`);
++    }
++  }
++
++  /**
++   * Handles status update messages
++   * @param {Object} message - The status update message
++   * @private
++   */
++  _handleStatusUpdate(message) {
++    if (!message.data) return;
++
++    console.log('ℹ️ [SIDE-PANEL] [sidepanel.js] Processing status update:', JSON.stringify(message.data));
++
++    switch (message.data.type) {
++      case 'USER_QUERY':
++        // Only add user messages that come from other sources (like omnibox)
++        if (message.data.source && message.data.source !== 'sidepanel') {
++          this.addMessage("user", message.data.message);
+         }
+-      } else if (toolResult.tool !== 'reasoning') {
+-        // Display other tool results briefly
+-        const result = toolResult.result;
+-        if (result && !result.error) {
+-          this.addMessage("system", `🔧 ${toolResult.tool}: ${typeof result === 'string' ? result : 'Success'}`);
+-        } else if (result && result.error) {
+-          this.addMessage("system", `❌ ${toolResult.tool}: ${result.error}`);
++        break;
++          
++      case 'PROCESSING':
++        this.addMessage("system", `⏳ ${message.data.message || 'Processing...'}`);
++        this.setProcessing(true);
++        break;
++          
++      case 'COMPLETED':
++        if (message.data.result) {
++          // Display individual tool results, especially reasoning/thinking
++          if (message.data.result.toolResults && Array.isArray(message.data.result.toolResults)) {
++            this._processToolResults(message.data.result.toolResults);
++          }
++          
++          // Display final response if available
++          if (message.data.result.response) {
++            this.addMessage("agent", message.data.result.response);
++          } else if (!message.data.result.success) {
++            this.addMessage("agent", `❌ Error: ${message.data.result.error || 'Operation failed'}`);
++          }
+         }
+-      }
+-    });
+-  }
++        this.setProcessing(false);
++        break;
++          
++      case 'ERROR':
++        this.addMessage("system", `❌ Error: ${message.data.error || 'An error occurred'}`);
++        this.setProcessing(false);
++        break;
++          
++      default:
++        console.warn('⚠️ [SIDE-PANEL] [sidepanel.js] Unknown status type:', message.data.type);
++    }
+   }
+-  
++
+   /**
+    * Handles user questions from the LLM
+    * @param {Object} message - The message object
+@@ -1008,29 +1014,30 @@ class VibeAISidePanel {
+    */
+   _handleUserQuestion(message, sendResponse) {
+     console.log('❓ [SIDE-PANEL] Handling user question:', message.question);
+-    
++
+     // Add the question as an agent message
+     this.addMessage("agent", `❓ ${message.question}`);
+-    
++
+     // Store the request info for when user responds
+     this.pendingQuestionRequest = {
+       requestId: message.requestId,
+       sendResponse: sendResponse
+     };
+-    
++
+     // Update status to show we're waiting for user input
+     this.updateStatus("waiting", "Waiting for your response...");
+-    
++
+     // Acknowledge receipt
+     sendResponse({ success: true });
+-    
++
+     return true;
+   }
++
+ }
+ 
+ // Initialize the side panel when the DOM is fully loaded
+ document.addEventListener('DOMContentLoaded', () => {
+-  window.vibeAISidePanel = new VibeAISidePanel();
++  window.vibeSidePanel = new VibeAISidePanel();
+ });
+ 
+ // Make available globally for debugging
+-- 
+2.50.0
+
