@@ -1,7 +1,7 @@
 From 0cfb5631a1b99b110bf1a44bdf43b9d82c553b06 Mon Sep 17 00:00:00 2001
 From: Den <2119348+dzianisv@users.noreply.github.com>
 Date: Wed, 30 Jul 2025 03:12:26 +0300
-Subject: [PATCH 89/91] Fix Chat4 status updates and agent execution issues
+Subject: [PATCH 089/107] Fix Chat4 status updates and agent execution issues
 
 Issues resolved:
 - Chat4 status updates not showing: Fixed message routing in background.js by calling sendResponse() immediately and using setTimeout for message broadcasting to prevent hanging

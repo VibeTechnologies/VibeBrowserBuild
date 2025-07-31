@@ -1,7 +1,7 @@
 From 715a577fa0e881d62b44d096c9de36443d3cf80b Mon Sep 17 00:00:00 2001
 From: Den <2119348+dzianisv@users.noreply.github.com>
 Date: Sat, 26 Jul 2025 19:33:55 +0300
-Subject: [PATCH 45/91] Fix AI agent reasoning tool failures
+Subject: [PATCH 045/107] Fix AI agent reasoning tool failures
 
 Root cause: ReasoningTool was returning JSON.stringify() instead of raw object,
 causing LangChain function calling system to fail when processing tool results.

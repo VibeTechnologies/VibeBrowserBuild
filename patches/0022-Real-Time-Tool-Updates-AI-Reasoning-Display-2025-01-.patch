@@ -1,11 +1,11 @@
 From e90253c4d5fba5562ab150ef8855cb73aecddae1 Mon Sep 17 00:00:00 2001
 From: Den <2119348+dzianisv@users.noreply.github.com>
 Date: Wed, 23 Jul 2025 12:27:00 +0300
-Subject: [PATCH 22/91] =?UTF-8?q?Real-Time=20Tool=20Updates=20&=20AI=20Rea?=
- =?UTF-8?q?soning=20Display=20(2025-01-23)**=20=20=20=20**Tasks=20Complete?=
- =?UTF-8?q?d:**=20=20=20=20-=20=E2=9C=85=20Modified=20ai=5Fagent.js:=20Add?=
- =?UTF-8?q?ed=20#sendToolUpdate()=20and=20#sendReasoningUpdate()=20methods?=
- =?UTF-8?q?=20=20=20=20-=20=E2=9C=85=20Enhanced=20AI=20iteration=20loop:?=
+Subject: [PATCH 022/107] =?UTF-8?q?Real-Time=20Tool=20Updates=20&=20AI=20R?=
+ =?UTF-8?q?easoning=20Display=20(2025-01-23)**=20=20=20=20**Tasks=20Comple?=
+ =?UTF-8?q?ted:**=20=20=20=20-=20=E2=9C=85=20Modified=20ai=5Fagent.js:=20A?=
+ =?UTF-8?q?dded=20#sendToolUpdate()=20and=20#sendReasoningUpdate()=20metho?=
+ =?UTF-8?q?ds=20=20=20=20-=20=E2=9C=85=20Enhanced=20AI=20iteration=20loop:?=
  =?UTF-8?q?=20Sends=20TOOL=5FUPDATE=20on=20every=20tool=20execution=20with?=
  =?UTF-8?q?=20real-time=20status=20=20=20=20-=20=E2=9C=85=20Added=20reason?=
  =?UTF-8?q?ing=20display:=20AI=20thinking=20process=20shown=20on=20each=20?=

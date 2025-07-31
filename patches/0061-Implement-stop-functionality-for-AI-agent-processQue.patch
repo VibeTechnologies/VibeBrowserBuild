@@ -1,8 +1,8 @@
 From 14422ab0750d0fcd1a8578595f9eea34fe9468b1 Mon Sep 17 00:00:00 2001
 From: Den <2119348+dzianisv@users.noreply.github.com>
 Date: Mon, 28 Jul 2025 01:51:30 +0300
-Subject: [PATCH 61/91] Implement stop functionality for AI agent processQuery
- loop
+Subject: [PATCH 061/107] Implement stop functionality for AI agent
+ processQuery loop
 
 - Add operation tracking with currentOperationId and shouldStop flag in VibeLangchainAgent
 - Implement stopOperation() method to mark operations for stopping

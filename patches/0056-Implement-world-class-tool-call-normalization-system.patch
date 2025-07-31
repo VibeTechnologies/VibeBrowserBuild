@@ -1,7 +1,7 @@
 From 14a9644f63d24569597a031dac2f0a66701672b2 Mon Sep 17 00:00:00 2001
 From: Den <2119348+dzianisv@users.noreply.github.com>
 Date: Sun, 27 Jul 2025 15:42:08 +0300
-Subject: [PATCH 56/91] Implement world-class tool call normalization system
+Subject: [PATCH 056/107] Implement world-class tool call normalization system
 
 - Replace hardcoded type fix with provider-agnostic ToolCallNormalizer
 - Add LLMProviderManager for auto-detection and configuration

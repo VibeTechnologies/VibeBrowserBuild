@@ -1,7 +1,7 @@
 From 6f0dd0b6de7e242972f450c9f6dcc9077e42d2a8 Mon Sep 17 00:00:00 2001
 From: Den <2119348+dzianisv@users.noreply.github.com>
 Date: Tue, 22 Jul 2025 23:16:25 +0300
-Subject: [PATCH 20/91] =?UTF-8?q?=E2=9C=85=201.=20Replaced=20AppleScript?=
+Subject: [PATCH 020/107] =?UTF-8?q?=E2=9C=85=201.=20Replaced=20AppleScript?=
  =?UTF-8?q?=20with=20DevTools=20CDP=20Connection?=
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8

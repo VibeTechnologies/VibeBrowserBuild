@@ -1,7 +1,7 @@
 From 426eff18af90f51b72816b4c69a384ced0fbe9a0 Mon Sep 17 00:00:00 2001
 From: Den <2119348+dzianisv@users.noreply.github.com>
 Date: Sun, 27 Jul 2025 16:06:08 +0300
-Subject: [PATCH 58/91] Fix missing thinking/observations in Chat4 UI
+Subject: [PATCH 058/107] Fix missing thinking/observations in Chat4 UI
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit

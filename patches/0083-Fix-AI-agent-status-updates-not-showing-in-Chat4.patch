@@ -1,7 +1,7 @@
 From 2581011ffc04ebbc375278fa6f355907d3aff353 Mon Sep 17 00:00:00 2001
 From: Den <2119348+dzianisv@users.noreply.github.com>
 Date: Wed, 30 Jul 2025 02:12:16 +0300
-Subject: [PATCH 83/91] Fix AI agent status updates not showing in Chat4
+Subject: [PATCH 083/107] Fix AI agent status updates not showing in Chat4
 
 - Implement enhanced callback system with direct tool wrapping
 - Add proper ReAct step iteration tracking for status updates

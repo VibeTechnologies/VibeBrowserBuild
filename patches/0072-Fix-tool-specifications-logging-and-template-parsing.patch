@@ -1,7 +1,7 @@
 From cd8717c6cf04aaa267daf5fca863f62b4b91b1fe Mon Sep 17 00:00:00 2001
 From: Den <2119348+dzianisv@users.noreply.github.com>
 Date: Tue, 29 Jul 2025 02:39:02 +0300
-Subject: [PATCH 72/91] Fix tool specifications logging and template parsing
+Subject: [PATCH 072/107] Fix tool specifications logging and template parsing
  errors
 
 Problem: AI agent was failing with "Single '}' in template" error and tool

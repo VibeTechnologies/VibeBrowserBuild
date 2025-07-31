@@ -1,7 +1,7 @@
 From d10f17cc2dd0133937820aa17bee9ec488057e77 Mon Sep 17 00:00:00 2001
 From: Den <2119348+dzianisv@users.noreply.github.com>
 Date: Sat, 26 Jul 2025 21:24:15 +0300
-Subject: [PATCH 47/91] Improve test framework to prevent LangChain
+Subject: [PATCH 047/107] Improve test framework to prevent LangChain
  compatibility bugs
 
 - Updated tests to reflect current tool architecture (ReportTool instead of removed FinishTool)

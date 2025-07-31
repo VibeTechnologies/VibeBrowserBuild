@@ -1,7 +1,7 @@
 From 78df4dd636cdb6c6cb1bfcf02a0114460acfc443 Mon Sep 17 00:00:00 2001
 From: Den <2119348+dzianisv@users.noreply.github.com>
 Date: Sun, 27 Jul 2025 16:02:09 +0300
-Subject: [PATCH 57/91] Add ReAct pattern UI components and test files
+Subject: [PATCH 057/107] Add ReAct pattern UI components and test files
 
 - Add ReActStep.tsx component for displaying reasoning steps
 - Update ChatPage.tsx and Message.tsx for better ReAct integration

@@ -1,7 +1,7 @@
 From 3c077ecae7e38214dba72a9b0e1903df1b2deb01 Mon Sep 17 00:00:00 2001
 From: Den <2119348+dzianisv@users.noreply.github.com>
 Date: Sat, 26 Jul 2025 13:06:53 +0300
-Subject: [PATCH 37/91] Remove legacy chat interface files and unused config
+Subject: [PATCH 037/107] Remove legacy chat interface files and unused config
  files
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8

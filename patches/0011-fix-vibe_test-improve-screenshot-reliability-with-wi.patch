@@ -1,7 +1,7 @@
 From 4cf7a42d5cf0d3e8b2cbb28152e4cb1658775811 Mon Sep 17 00:00:00 2001
 From: Den <2119348+dzianisv@users.noreply.github.com>
 Date: Tue, 22 Jul 2025 16:35:49 +0300
-Subject: [PATCH 11/91] fix(vibe_test): improve screenshot reliability with
+Subject: [PATCH 011/107] fix(vibe_test): improve screenshot reliability with
  window activation and fallbacks
 
 - Implement three-tier fallback strategy for screenshot capture

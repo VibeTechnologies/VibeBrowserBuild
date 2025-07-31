@@ -1,7 +1,7 @@
 From 490489779f46e00173f561348c5f99ae9a0eba31 Mon Sep 17 00:00:00 2001
 From: Den <2119348+dzianisv@users.noreply.github.com>
 Date: Mon, 28 Jul 2025 16:40:28 +0300
-Subject: [PATCH 67/91] Remove chat2 and chat3 build configurations from
+Subject: [PATCH 067/107] Remove chat2 and chat3 build configurations from
  build.js
 
 Simplify build script to only support Chat4:

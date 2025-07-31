@@ -1,7 +1,8 @@
 From 2d7a9abaed29c38a58781b128dacd9b418a52955 Mon Sep 17 00:00:00 2001
 From: Den <2119348+dzianisv@users.noreply.github.com>
 Date: Tue, 22 Jul 2025 23:06:42 +0300
-Subject: [PATCH 19/91] Enhance form filling with automatic dropdown selection
+Subject: [PATCH 019/107] Enhance form filling with automatic dropdown
+ selection
 
 - Auto-click dropdown suggestions after filling input fields (Google Flights compatibility)
 - Try multiple CSS selectors for suggestion detection

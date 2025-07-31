@@ -1,13 +1,13 @@
 From 7e6dbd5fc923c87df2614b04cb8b25bf46fd8555 Mon Sep 17 00:00:00 2001
 From: Den <2119348+dzianisv@users.noreply.github.com>
 Date: Wed, 23 Jul 2025 12:51:15 +0300
-Subject: [PATCH 23/91] =?UTF-8?q?1.=20Build=20System=20Fix=20=20=20=20=20-?=
- =?UTF-8?q?=20Updated=20build=20target=20reference=20from=20vibe:build=20t?=
- =?UTF-8?q?o=20proper=20GN=20target=20=20=20=20=20-=20Build=20now=20works?=
- =?UTF-8?q?=20correctly=20with=20ninja=20-C=20out/Debug=20chrome/browser/r?=
- =?UTF-8?q?esources/vibe:build=20=20=202.=20AppleScript=20=E2=86=92=20CDP?=
- =?UTF-8?q?=20Migration=20=20=20=20=20-=20Browser=20activation:=20osascrip?=
- =?UTF-8?q?t=20-e=20'tell=20application=20"Chromium"=20to=20activate'=20?=
+Subject: [PATCH 023/107] =?UTF-8?q?1.=20Build=20System=20Fix=20=20=20=20?=
+ =?UTF-8?q?=20-=20Updated=20build=20target=20reference=20from=20vibe:build?=
+ =?UTF-8?q?=20to=20proper=20GN=20target=20=20=20=20=20-=20Build=20now=20wo?=
+ =?UTF-8?q?rks=20correctly=20with=20ninja=20-C=20out/Debug=20chrome/browse?=
+ =?UTF-8?q?r/resources/vibe:build=20=20=202.=20AppleScript=20=E2=86=92=20C?=
+ =?UTF-8?q?DP=20Migration=20=20=20=20=20-=20Browser=20activation:=20osascr?=
+ =?UTF-8?q?ipt=20-e=20'tell=20application=20"Chromium"=20to=20activate'=20?=
  =?UTF-8?q?=E2=86=92=20Target.activateTarget()=20=20=20=20=20-=20Keyboard?=
  =?UTF-8?q?=20shortcuts:=20osascript=20keystroke=20=E2=86=92=20Input.dispa?=
  =?UTF-8?q?tchKeyEvent()=20=20=20=20=20-=20Text=20input:=20osascript=20key?=

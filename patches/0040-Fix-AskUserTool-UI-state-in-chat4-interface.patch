@@ -1,7 +1,7 @@
 From 5d71de5e7010c85c89be84bdcd2c21a4da70a2d9 Mon Sep 17 00:00:00 2001
 From: Den <2119348+dzianisv@users.noreply.github.com>
 Date: Sat, 26 Jul 2025 14:32:27 +0300
-Subject: [PATCH 40/91] Fix AskUserTool UI state in chat4 interface
+Subject: [PATCH 040/107] Fix AskUserTool UI state in chat4 interface
 
 - Updated placeholder text to be more clear when waiting for user input
 - Confirmed proper UI state handling:

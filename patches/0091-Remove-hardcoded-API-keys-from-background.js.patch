@@ -1,7 +1,7 @@
 From 803507ae21f88d31937e553187c7ba27c2cefcf5 Mon Sep 17 00:00:00 2001
 From: Den <2119348+dzianisv@users.noreply.github.com>
 Date: Wed, 30 Jul 2025 11:56:27 +0300
-Subject: [PATCH 91/91] Remove hardcoded API keys from background.js
+Subject: [PATCH 091/107] Remove hardcoded API keys from background.js
 
 - Replace hardcoded OpenAI and Gemini API keys with proper environment/settings loading
 - API keys should come from Chrome settings or environment variables

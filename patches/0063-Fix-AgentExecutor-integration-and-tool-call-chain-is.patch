@@ -1,7 +1,7 @@
 From e0f32ecbbc63f2db6f773976efad2a650a337ce0 Mon Sep 17 00:00:00 2001
 From: Den <2119348+dzianisv@users.noreply.github.com>
 Date: Mon, 28 Jul 2025 13:02:49 +0300
-Subject: [PATCH 63/91] Fix AgentExecutor integration and tool call chain
+Subject: [PATCH 063/107] Fix AgentExecutor integration and tool call chain
  issues
 
 Key fixes implemented:

@@ -1,27 +1,27 @@
 From 451a152be0c0b9d7149a4d7c19962627274ee097 Mon Sep 17 00:00:00 2001
 From: Den <2119348+dzianisv@users.noreply.github.com>
 Date: Wed, 23 Jul 2025 13:52:47 +0300
-Subject: [PATCH 27/91] =?UTF-8?q?Layer=201:=20Centered=20Chat=20Column=20R?=
- =?UTF-8?q?educed=20max-width=20from=206xl=20to=203xl=20(72rem=20=E2=86=92?=
- =?UTF-8?q?=2048rem)=20Added=20proper=20spacing=20with=20flex=20column=20a?=
- =?UTF-8?q?nd=20gap=20Ensured=20messages=20are=20centered=20and=20take=20f?=
- =?UTF-8?q?ull=20width=20Layer=202:=20Floating=20Bottom=20Composer=20Made?=
- =?UTF-8?q?=20the=20input=20area=20fixed=20at=20the=20bottom=20Added=20tra?=
- =?UTF-8?q?nslucent=20background=20with=20backdrop=20blur=20Matched=20the?=
- =?UTF-8?q?=20width=20to=20the=20chat=20column=20Added=20bottom=20padding?=
- =?UTF-8?q?=20to=20messages=20to=20prevent=20overlap=20Layer=203:=20Vertic?=
- =?UTF-8?q?al=20Nav=20Rail=20Added=20a=20thin=20vertical=20navigation=20ba?=
- =?UTF-8?q?r=20on=20the=20left=20Included=20buttons=20for=20New=20Chat,=20?=
- =?UTF-8?q?History,=20and=20Settings=20Added=20proper=20hover=20states=20a?=
- =?UTF-8?q?nd=20icons=20Made=20it=20responsive=20(collapses=20on=20mobile)?=
- =?UTF-8?q?=20Visual=20Polish=20Added=20light=20gray=20background=20(#f7f7?=
- =?UTF-8?q?f8)=20for=20light=20mode=20Added=20dark=20mode=20background=20c?=
- =?UTF-8?q?olor=20Added=20subtle=20shadows=20to=20message=20bubbles=20Impr?=
- =?UTF-8?q?oved=20overall=20spacing=20and=20alignment=20The=20interface=20?=
- =?UTF-8?q?now=20closely=20resembles=20ChatGPT's=20layout=20while=20mainta?=
- =?UTF-8?q?ining=20all=20existing=20functionality.=20The=20changes=20are?=
- =?UTF-8?q?=20purely=20presentational=20and=20don't=20affect=20the=20under?=
- =?UTF-8?q?lying=20JavaScript=20logic.?=
+Subject: [PATCH 027/107] =?UTF-8?q?Layer=201:=20Centered=20Chat=20Column?=
+ =?UTF-8?q?=20Reduced=20max-width=20from=206xl=20to=203xl=20(72rem=20?=
+ =?UTF-8?q?=E2=86=92=2048rem)=20Added=20proper=20spacing=20with=20flex=20c?=
+ =?UTF-8?q?olumn=20and=20gap=20Ensured=20messages=20are=20centered=20and?=
+ =?UTF-8?q?=20take=20full=20width=20Layer=202:=20Floating=20Bottom=20Compo?=
+ =?UTF-8?q?ser=20Made=20the=20input=20area=20fixed=20at=20the=20bottom=20A?=
+ =?UTF-8?q?dded=20translucent=20background=20with=20backdrop=20blur=20Matc?=
+ =?UTF-8?q?hed=20the=20width=20to=20the=20chat=20column=20Added=20bottom?=
+ =?UTF-8?q?=20padding=20to=20messages=20to=20prevent=20overlap=20Layer=203?=
+ =?UTF-8?q?:=20Vertical=20Nav=20Rail=20Added=20a=20thin=20vertical=20navig?=
+ =?UTF-8?q?ation=20bar=20on=20the=20left=20Included=20buttons=20for=20New?=
+ =?UTF-8?q?=20Chat,=20History,=20and=20Settings=20Added=20proper=20hover?=
+ =?UTF-8?q?=20states=20and=20icons=20Made=20it=20responsive=20(collapses?=
+ =?UTF-8?q?=20on=20mobile)=20Visual=20Polish=20Added=20light=20gray=20back?=
+ =?UTF-8?q?ground=20(#f7f7f8)=20for=20light=20mode=20Added=20dark=20mode?=
+ =?UTF-8?q?=20background=20color=20Added=20subtle=20shadows=20to=20message?=
+ =?UTF-8?q?=20bubbles=20Improved=20overall=20spacing=20and=20alignment=20T?=
+ =?UTF-8?q?he=20interface=20now=20closely=20resembles=20ChatGPT's=20layout?=
+ =?UTF-8?q?=20while=20maintaining=20all=20existing=20functionality.=20The?=
+ =?UTF-8?q?=20changes=20are=20purely=20presentational=20and=20don't=20affe?=
+ =?UTF-8?q?ct=20the=20underlying=20JavaScript=20logic.?=
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit

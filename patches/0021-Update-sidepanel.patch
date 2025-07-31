@@ -1,7 +1,7 @@
 From 9fc025eec04b69e838ce332fff07d81069cc0dce Mon Sep 17 00:00:00 2001
 From: Den <2119348+dzianisv@users.noreply.github.com>
 Date: Wed, 23 Jul 2025 00:32:18 +0300
-Subject: [PATCH 21/91] Update sidepanel
+Subject: [PATCH 021/107] Update sidepanel
 
 ---
  chrome/browser/resources/vibe/BUILD.gn       |   2 +

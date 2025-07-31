@@ -1,7 +1,7 @@
 From 0851d2f7c39cdee186f87fb804c3bc44d893144f Mon Sep 17 00:00:00 2001
 From: Den <2119348+dzianisv@users.noreply.github.com>
 Date: Tue, 22 Jul 2025 18:43:51 +0300
-Subject: [PATCH 13/91] Extend ai_tools.extension.js
+Subject: [PATCH 013/107] Extend ai_tools.extension.js
 
 ---
  .../resources/vibe/ai_tools.extension.js      | 145 ++++++++++++++++--

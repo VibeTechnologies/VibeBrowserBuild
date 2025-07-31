@@ -1,7 +1,7 @@
 From 23fc87720bd4e211d8a36a70925bc53b2ccd157e Mon Sep 17 00:00:00 2001
 From: Den <2119348+dzianisv@users.noreply.github.com>
 Date: Sat, 26 Jul 2025 21:17:34 +0300
-Subject: [PATCH 46/91] Fix dark mode detection and user message visibility
+Subject: [PATCH 046/107] Fix dark mode detection and user message visibility
 
 - Replace time-based dark mode detection with system prefers-color-scheme
 - Fix user message text visibility in dark mode (use white text)

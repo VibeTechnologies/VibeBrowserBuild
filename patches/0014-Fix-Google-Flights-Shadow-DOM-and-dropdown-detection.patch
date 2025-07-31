@@ -1,7 +1,7 @@
 From 3190793c560ba4284948c4d923d820f1519b35f0 Mon Sep 17 00:00:00 2001
 From: Den <2119348+dzianisv@users.noreply.github.com>
 Date: Tue, 22 Jul 2025 18:49:44 +0300
-Subject: [PATCH 14/91] Fix Google Flights Shadow DOM and dropdown detection
+Subject: [PATCH 014/107] Fix Google Flights Shadow DOM and dropdown detection
  issues
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8

@@ -1,7 +1,7 @@
 From 868512d9156bb351394002977f6ecb4a3685f19b Mon Sep 17 00:00:00 2001
 From: Den <2119348+dzianisv@users.noreply.github.com>
 Date: Sat, 26 Jul 2025 14:38:51 +0300
-Subject: [PATCH 42/91] Improve chat4 tooling with better JSON and markdown
+Subject: [PATCH 042/107] Improve chat4 tooling with better JSON and markdown
  rendering
 
 - Added markdown rendering support with basic formatting (bold, italic, code blocks, inline code)

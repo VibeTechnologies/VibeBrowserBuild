@@ -1,8 +1,8 @@
 From e95fee06dd6c687eba2c42c8b79245ca601773ed Mon Sep 17 00:00:00 2001
 From: Den <2119348+dzianisv@users.noreply.github.com>
 Date: Wed, 30 Jul 2025 00:46:47 +0300
-Subject: [PATCH 77/91] Fix AI agent tool messaging errors - add FILL and TYPE
- handlers
+Subject: [PATCH 077/107] Fix AI agent tool messaging errors - add FILL and
+ TYPE handlers
 
 - Added missing "FILL" case handler in content script message switch
 - Added handleFill() function to process fill tool requests

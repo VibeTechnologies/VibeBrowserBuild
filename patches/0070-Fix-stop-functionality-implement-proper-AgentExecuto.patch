@@ -1,8 +1,8 @@
 From 8ee68a9a0551b47aa190a7fdec48ef94ada1b0cd Mon Sep 17 00:00:00 2001
 From: Den <2119348+dzianisv@users.noreply.github.com>
 Date: Mon, 28 Jul 2025 21:16:46 +0300
-Subject: [PATCH 70/91] Fix stop functionality - implement proper AgentExecutor
- cancellation
+Subject: [PATCH 070/107] Fix stop functionality - implement proper
+ AgentExecutor cancellation
 
 Issue: Stop button didn't interrupt AI agent, AgentExecutor.invoke() continued running
 despite shouldStop flag being set to true.

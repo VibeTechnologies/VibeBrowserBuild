@@ -1,7 +1,7 @@
 From 321fa1d55c56df55f0062b1b02106b1511883166 Mon Sep 17 00:00:00 2001
 From: Den <2119348+dzianisv@users.noreply.github.com>
 Date: Sat, 26 Jul 2025 23:18:45 +0300
-Subject: [PATCH 49/91] Fix StructuredLogger reasoning parameter validation
+Subject: [PATCH 049/107] Fix StructuredLogger reasoning parameter validation
 
 - Added null-safe string conversion for reasoning parameter in logReasoning method
 - Prevents "Cannot read properties of undefined (reading 'length')" errors

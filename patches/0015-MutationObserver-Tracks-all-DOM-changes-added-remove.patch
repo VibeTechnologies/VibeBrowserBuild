@@ -1,7 +1,7 @@
 From 0886626e84d40911ca2f925389ecbf8b169915e7 Mon Sep 17 00:00:00 2001
 From: Den <2119348+dzianisv@users.noreply.github.com>
 Date: Tue, 22 Jul 2025 19:05:24 +0300
-Subject: [PATCH 15/91] MutationObserver - Tracks all DOM changes
+Subject: [PATCH 015/107] MutationObserver - Tracks all DOM changes
  (added/removed nodes, attribute changes)   2. Ring buffer - Stores last 2000
  mutations with tag, id, class, aria-label, role, text   3.
  GET_PAGE_CONTENT_DIFF - New message type returns only changes since last call

@@ -1,7 +1,7 @@
 From 375d8bdca879f39fdfafb4d2b197ec3191e13741 Mon Sep 17 00:00:00 2001
 From: Den <2119348+dzianisv@users.noreply.github.com>
 Date: Mon, 28 Jul 2025 13:40:38 +0300
-Subject: [PATCH 65/91] Update readme
+Subject: [PATCH 065/107] Update readme
 
 ---
  chrome/browser/resources/vibe/CLAUDE.md | 16 ----------------

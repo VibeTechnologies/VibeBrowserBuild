@@ -1,7 +1,7 @@
 From d92666d41e19c3afbf1a84070a84fce9fb62b991 Mon Sep 17 00:00:00 2001
 From: Den <2119348+dzianisv@users.noreply.github.com>
 Date: Sun, 27 Jul 2025 10:23:47 +0300
-Subject: [PATCH 54/91] Add --timeout parameter to control wait time after
+Subject: [PATCH 054/107] Add --timeout parameter to control wait time after
  query typing
 
 ---

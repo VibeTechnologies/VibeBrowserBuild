@@ -1,7 +1,7 @@
 From edc90a58b2c28f7c9ad2e818eb3ce3b3ca7baac3 Mon Sep 17 00:00:00 2001
 From: Den <2119348+dzianisv@users.noreply.github.com>
 Date: Tue, 29 Jul 2025 23:50:33 +0300
-Subject: [PATCH 74/91] Fix invalid model ID error in AI agent configuration
+Subject: [PATCH 074/107] Fix invalid model ID error in AI agent configuration
 
 - Remove extra spaces from model name template strings in ai_agent.js
 - Fix 'google-genai' format (was 'google - genai' with spaces)

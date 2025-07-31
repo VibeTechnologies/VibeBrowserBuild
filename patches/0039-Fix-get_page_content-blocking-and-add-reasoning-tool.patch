@@ -1,7 +1,7 @@
 From f83bd0a39583cca38c58a57f33fbf289fafdce2f Mon Sep 17 00:00:00 2001
 From: Den <2119348+dzianisv@users.noreply.github.com>
 Date: Sat, 26 Jul 2025 14:28:08 +0300
-Subject: [PATCH 39/91] Fix get_page_content blocking and add reasoning tool
+Subject: [PATCH 039/107] Fix get_page_content blocking and add reasoning tool
  integration
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
